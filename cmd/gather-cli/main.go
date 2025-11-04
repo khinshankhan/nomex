@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-func main() {
+func runChecks() {
 
 	// list of domain names to check
 	domainNames := []string{
@@ -31,4 +31,14 @@ func main() {
 
 		fmt.Printf("Domain=%s Taken=%t Error=%v\n", domainName, taken, err)
 	}
+}
+
+func main() {
+	db, err := openBadger("db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	runChecks()
 }
