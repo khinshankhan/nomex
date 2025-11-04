@@ -42,6 +42,53 @@ func verifyDomains(db *badger.DB, domainNames []string) {
 	}
 }
 
+// TODO: we need to greatly decrease the candidate space
+// conversation on TPH https://discord.com/channels/244230771232079873/244230771232079873/1435352534821765220
+func generateCandidates(tlds []string) []string {
+	candidates := []string{}
+
+	// TODO: surely there's a more efficient way to do this
+	for _, tld := range tlds {
+		for c1 := 'a'; c1 <= 'z'; c1++ {
+			for c2 := 'a'; c2 <= 'z'; c2++ {
+				for c3 := 'a'; c3 <= 'z'; c3++ {
+					for c4 := 'a'; c4 <= 'z'; c4++ {
+						domain := fmt.Sprintf("%c%c%c%c.%s", c1, c2, c3, c4, tld)
+						candidates = append(candidates, domain)
+					}
+				}
+			}
+		}
+	}
+
+	return candidates
+}
+
+func filterBadCandidates(domains []string) []string {
+	// known bad domains to exclude, they have bad records that break our simple checks
+	badDomains := map[string]struct{}{
+		"aaad.net": {},
+		"aaax.net": {},
+		"aaem.net": {},
+		"aafl.net": {},
+		"jmpb.net": {},
+	}
+
+	var filtered []string
+	for _, d := range domains {
+		if _, found := badDomains[d]; found {
+			continue
+		}
+
+		filtered = append(filtered, d)
+	}
+
+	return filtered
+}
+
+// TODO: make this a flag
+const CHECK_DOMAINS = false
+
 func main() {
 	db, err := openBadger("db")
 	if err != nil {
@@ -49,27 +96,22 @@ func main() {
 	}
 	defer db.Close()
 
-	// list of domain names to check
-	domainNames := []string{
-		// taken
-		"khinshankhan.com",
-		// taken but reserved
-		"example.com",
-		// not taken
-		"thisdomaindoesntexistcurrentlybecauseichecked.com",
-	}
+	if CHECK_DOMAINS {
+		err = bulkEnsureRows(db, generateCandidates([]string{"net"}))
+		if err != nil {
+			panic(err)
+		}
 
-	err = bulkEnsureRows(db, domainNames)
-	if err != nil {
-		panic(err)
-	}
+		// NOTE: this loads any pre existing pending domains from the database
+		pendingDomains, err := loadPendingFromDB(db)
+		if err != nil {
+			panic(err)
+		}
 
-	pendingDomainNames, err := loadPendingFromDB(db)
-	if err != nil {
-		panic(err)
+		// list of domain names to check
+		candidates := filterBadCandidates(pendingDomains)
+		verifyDomains(db, candidates)
 	}
-
-	verifyDomains(db, pendingDomainNames)
 
 	availableDomains, err := loadAvailableFromDB(db)
 	if err != nil {
