@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"time"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 func checkDomain(domainName string) (int, error) {
@@ -21,6 +23,23 @@ func checkDomain(domainName string) (int, error) {
 	// domain not found via dns, double-check with rdap
 	code, err := RdapCheck(domainName)
 	return code, err
+}
+
+func verifyDomains(db *badger.DB, domainNames []string) {
+	for _, domainName := range domainNames {
+		fmt.Println("Checking domain:", domainName)
+
+		// TODO: circle back to check errors
+		// TODO: check code to avoid getting ratelimited/ other issues
+		code, err := checkDomain(domainName)
+		if err != nil {
+			fmt.Println("Error checking domain", domainName, ":", err)
+			panic(err)
+		}
+		fmt.Println("Domain:", domainName, "Code:", code)
+		t := time.Now()
+		saveCode(db, domainName, code, &t)
+	}
 }
 
 func main() {
@@ -50,15 +69,14 @@ func main() {
 		panic(err)
 	}
 
-	for _, domainName := range pendingDomainNames {
-		fmt.Println("Checking domain:", domainName)
+	verifyDomains(db, pendingDomainNames)
 
-		// TODO: circle back to check errors
-		// TODO: check code to avoid getting ratelimited/ other issues
-		code, _ := checkDomain(domainName)
-		fmt.Println("Domain:", domainName, "Code:", code)
-
-		t := time.Now()
-		saveCode(db, domainName, code, &t)
+	availableDomains, err := loadAvailableFromDB(db)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("Available domains:")
+	for _, d := range availableDomains {
+		fmt.Println("-", d)
 	}
 }

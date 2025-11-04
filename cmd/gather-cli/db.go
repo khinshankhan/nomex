@@ -28,6 +28,10 @@ func (v *checkVal) isFinal() bool {
 	return v.Code == 200 || v.Code == 404
 }
 
+func (v *checkVal) isAvailable() bool {
+	return v.Code == 404
+}
+
 func keyFor(domain string) []byte {
 	return []byte("checks/" + domain)
 }
@@ -107,8 +111,34 @@ func loadPendingFromDB(db *badger.DB) ([]string, error) {
 			if err != nil {
 				return err
 			}
+
 			// is pending?
 			if !v.isFinal() {
+				d := strings.TrimPrefix(string(item.Key()), "checks/")
+				out = append(out, d)
+			}
+		}
+		return nil
+	})
+	return out, err
+}
+
+func loadAvailableFromDB(db *badger.DB) ([]string, error) {
+	var out []string
+	err := db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		prefix := []byte("checks/")
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			item := it.Item()
+			var v checkVal
+			err := item.Value(func(b []byte) error { return json.Unmarshal(b, &v) })
+			if err != nil {
+				return err
+			}
+
+			// is available?
+			if v.isAvailable() {
 				d := strings.TrimPrefix(string(item.Key()), "checks/")
 				out = append(out, d)
 			}
