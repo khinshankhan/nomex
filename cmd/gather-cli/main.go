@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -30,14 +31,28 @@ func init() {
 	}
 }
 
-func checkDomainAvailabilityRDAP(domainName string) {
-	domain, err := client.QueryDomain(domainName)
+func checkDomainAvailabilityRDAP(domainName string) (bool, error) {
+	_, err := client.QueryDomain(domainName)
 
 	if err == nil {
-		fmt.Printf("Handle=%s Domain=%s\n", domain.Handle, domain.LDHName)
+		return true, nil
 	} else {
-		fmt.Printf("Error: %s\n", err)
+		return false, err
 	}
+}
+
+func checkDomainAvailabilityDnsLookup(domainName string) (bool, error) {
+	_, err := net.LookupHost(domainName)
+	if err != nil {
+		if dnsErr, ok := err.(*net.DNSError); ok && dnsErr.Err == "no such host" {
+			// domain is available
+			return false, nil
+		}
+		// some other error occurred
+		return false, err
+	}
+	// domain is taken
+	return true, nil
 }
 
 func main() {
@@ -53,6 +68,18 @@ func main() {
 	}
 
 	for _, domainName := range domainNames {
-		checkDomainAvailabilityRDAP(domainName)
+		var taken bool = true
+		var err error = nil
+
+		dnsTaken, dnsErr := checkDomainAvailabilityDnsLookup(domainName)
+		if dnsErr != nil || dnsTaken {
+			taken = dnsTaken
+			err = dnsErr
+		} else {
+			fmt.Println("DNS says available, checking RDAP...")
+			taken, err = checkDomainAvailabilityRDAP(domainName)
+		}
+
+		fmt.Printf("Domain=%s Taken=%t Error=%v\n", domainName, taken, err)
 	}
 }
