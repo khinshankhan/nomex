@@ -5,19 +5,22 @@ import (
 	"time"
 )
 
-func checkDomain(domainName string) (bool, error) {
-	var taken bool = true
-	var err error = nil
-
-	dnsTaken, dnsErr := DnsCheck(domainName)
-	if dnsErr != nil || dnsTaken {
-		taken = dnsTaken
-		err = dnsErr
-	} else {
-		taken, err = RdapCheck(domainName)
+func checkDomain(domainName string) (int, error) {
+	taken, err := DnsCheck(domainName)
+	if err != nil {
+		// some error occurred during check
+		fmt.Println("DNS check error for", domainName, ":", err)
+		return 500, err
 	}
 
-	return taken, err
+	// we can trust that the domain is taken
+	if taken {
+		return 200, nil
+	}
+
+	// domain not found via dns, double-check with rdap
+	code, err := RdapCheck(domainName)
+	return code, err
 }
 
 func main() {
@@ -49,21 +52,11 @@ func main() {
 
 	for _, domainName := range pendingDomainNames {
 		fmt.Println("Checking domain:", domainName)
-		taken, err := checkDomain(domainName)
 
-		// TODO: temporary hardcoded status 418 for testing, unsure what a good status code would be here
-		code := 418
-		if err == nil {
-			if taken {
-				// taken
-				code = 200
-			} else {
-				// available
-				code = 404
-			}
-		} else {
-			fmt.Println("Error checking domain", domainName, ":", err)
-		}
+		// TODO: circle back to check errors
+		// TODO: check code to avoid getting ratelimited/ other issues
+		code, _ := checkDomain(domainName)
+		fmt.Println("Domain:", domainName, "Code:", code)
 
 		t := time.Now()
 		saveCode(db, domainName, code, &t)
