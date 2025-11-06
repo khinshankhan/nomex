@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -74,8 +75,12 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println("Available domains:")
+	f, err := os.Create("available-domains.txt")
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
 	for _, d := range availableDomains {
-		fmt.Println("-", d)
+		f.WriteString(d + "\n")
 	}
 }
