@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"time"
-
-	"github.com/dgraph-io/badger/v4"
 )
 
 func checkDomain(domainName string) (int, error) {
@@ -26,8 +24,8 @@ func checkDomain(domainName string) (int, error) {
 	return code, err
 }
 
-func verifyDomains(db *badger.DB, domainNames []string) {
-	for _, domainName := range domainNames {
+func verifyDomains(saveDomainCode func(string, int, *time.Time), domainNames []string) {
+	for i, domainName := range domainNames {
 		fmt.Println("Checking domain:", domainName)
 
 		// TODO: circle back to check errors
@@ -39,7 +37,7 @@ func verifyDomains(db *badger.DB, domainNames []string) {
 		}
 		fmt.Println("Domain:", domainName, "Code:", code)
 		t := time.Now()
-		saveCode(db, domainName, code, &t)
+		saveDomainCode(domainName, code, &t)
 	}
 }
 
@@ -47,7 +45,7 @@ func verifyDomains(db *badger.DB, domainNames []string) {
 const CHECK_DOMAINS = false
 
 func main() {
-	db, err := openBadger("db")
+	db, err := openDB("domains.sqlite")
 	if err != nil {
 		panic(err)
 	}
@@ -67,7 +65,12 @@ func main() {
 
 		// list of domain names to check
 		candidates := filterBadCandidates(pendingDomains)
-		verifyDomains(db, candidates)
+		verifyDomains(func(domainName string, code int, t *time.Time) {
+			err := saveCode(db, domainName, code, t)
+			if err != nil {
+				panic(err)
+			}
+		}, candidates)
 	}
 
 	availableDomains, err := loadAvailableFromDB(db)

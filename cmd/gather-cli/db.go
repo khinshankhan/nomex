@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/json"
-	"os"
-	"strings"
+	"database/sql"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	_ "modernc.org/sqlite"
 )
 
 type Row struct {
@@ -15,135 +13,91 @@ type Row struct {
 	At     *time.Time
 }
 
-type checkVal struct {
-	Code      int   `json:"code"`       // -1 = unset/pending
-	CheckedAt int64 `json:"checked_at"` // unix seconds -- 0 if never
-}
-
-/** Final codes are 200 (taken) and 404 (available).
- * NOTE: code will be used to indicate available domains at the time of fetch
- * which is not necessarily the same as still untaken at the time of inquiry
- */
-func (v *checkVal) isFinal() bool {
-	return v.Code == 200 || v.Code == 404
-}
-
-func (v *checkVal) isAvailable() bool {
-	return v.Code == 404
-}
-
-func keyFor(domain string) []byte {
-	return []byte("checks/" + domain)
-}
-
-func openBadger(dir string) (*badger.DB, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+func openDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
 		return nil, err
 	}
-	opts := badger.DefaultOptions(dir)
-	// store values on disk (good for large sets?)
-	opts = opts.WithValueDir(dir)
-	opts = opts.WithLoggingLevel(badger.WARNING)
-	return badger.Open(opts)
+
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS checks (
+  domain TEXT PRIMARY KEY,
+  code INTEGER NULL,           -- HTTP status code (NULL until first attempt)
+  checked_at DATETIME NULL     -- last attempt time (NULL until first attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_checks_code ON checks(code);
+`); err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
-func bulkEnsureRows(db *badger.DB, domains []string) error {
-	wb := db.NewWriteBatch()
-	defer wb.Cancel()
-
-	ts := time.Now().Unix()
-	val := checkVal{Code: -1, CheckedAt: ts}
-
+func bulkEnsureRows(db *sql.DB, domains []string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO checks(domain) VALUES(?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
 	for _, d := range domains {
-		k := keyFor(d)
-		// only insert if missing
-		err := db.View(func(txn *badger.Txn) error {
-			_, err := txn.Get(k)
-			return err
-		})
-		if err == nil {
-			// exists
-			continue
-		}
-		if err != nil && err != badger.ErrKeyNotFound {
-			return err
-		}
-		b, _ := json.Marshal(val)
-		if err := wb.Set(k, b); err != nil {
+		if _, err := stmt.Exec(d); err != nil {
+			_ = tx.Rollback()
 			return err
 		}
 	}
-	return wb.Flush()
+	return tx.Commit()
 }
 
-func saveCode(db *badger.DB, domain string, code int, at *time.Time) error {
-	return db.Update(func(txn *badger.Txn) error {
-		k := keyFor(domain)
-
-		// read existing (to preserve if previously final)
-		var cur checkVal
-		item, err := txn.Get(k)
-		if err == nil {
-			_ = item.Value(func(v []byte) error { return json.Unmarshal(v, &cur) })
-		} else if err != badger.ErrKeyNotFound {
-			return err
-		}
-
-		cur.Code = code
-		if at != nil {
-			cur.CheckedAt = at.Unix()
-		}
-		b, _ := json.Marshal(cur)
-		return txn.Set(k, b)
-	})
-}
-
-func loadPendingFromDB(db *badger.DB) ([]string, error) {
-	var out []string
-	err := db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		prefix := []byte("checks/")
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			var v checkVal
-			err := item.Value(func(b []byte) error { return json.Unmarshal(b, &v) })
-			if err != nil {
-				return err
-			}
-
-			// is pending?
-			if !v.isFinal() {
-				d := strings.TrimPrefix(string(item.Key()), "checks/")
-				out = append(out, d)
-			}
-		}
+// format as RFC3339 in UTC, which SQLite accepts as DATETIME TEXT
+func toSQLiteDT(t *time.Time) any {
+	if t == nil {
 		return nil
-	})
-	return out, err
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
-func loadAvailableFromDB(db *badger.DB) ([]string, error) {
-	var out []string
-	err := db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		prefix := []byte("checks/")
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			var v checkVal
-			err := item.Value(func(b []byte) error { return json.Unmarshal(b, &v) })
-			if err != nil {
-				return err
-			}
+func saveCode(db *sql.DB, domain string, code int, at *time.Time) error {
+	_, err := db.Exec(
+		`UPDATE checks SET code=?, checked_at=? WHERE domain=?`, code, toSQLiteDT(at), domain,
+	)
+	return err
+}
 
-			// is available?
-			if v.isAvailable() {
-				d := strings.TrimPrefix(string(item.Key()), "checks/")
-				out = append(out, d)
-			}
+func loadPendingFromDB(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT domain FROM checks WHERE code IS NULL OR code NOT IN (200,404)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
 		}
-		return nil
-	})
-	return out, err
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func loadAvailableFromDB(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT domain FROM checks WHERE code = 404`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
