@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"time"
@@ -24,7 +25,7 @@ func checkDomain(domainName string) (int, error) {
 	return code, err
 }
 
-func verifyDomains(saveDomainCode func(string, int, *time.Time), domainNames []string) {
+func verifyDomains(db *sql.DB, domainNames []string) {
 	for i, domainName := range domainNames {
 		fmt.Printf("(%d/%d) ", i+1, len(domainNames))
 		fmt.Println("Checking domain:", domainName)
@@ -36,9 +37,13 @@ func verifyDomains(saveDomainCode func(string, int, *time.Time), domainNames []s
 			fmt.Println("Error checking domain", domainName, ":", err)
 			panic(err)
 		}
+
 		fmt.Println("Domain:", domainName, "Code:", code)
 		t := time.Now()
-		saveDomainCode(domainName, code, &t)
+		err = saveCode(db, domainName, code, &t)
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -66,12 +71,7 @@ func main() {
 
 		// list of domain names to check
 		candidates := filterBadCandidates(pendingDomains)
-		verifyDomains(func(domainName string, code int, t *time.Time) {
-			err := saveCode(db, domainName, code, t)
-			if err != nil {
-				panic(err)
-			}
-		}, candidates)
+		verifyDomains(db, candidates)
 	}
 
 	availableDomains, err := loadAvailableFromDB(db)
