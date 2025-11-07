@@ -26,47 +26,50 @@ func checkDomain(domainName string) (int, error) {
 	return code, err
 }
 
+func verifyDomain(db *sql.DB, domainName string) {
+	t := time.Now()
+	// TODO: circle back to check errors
+	// TODO: check code to avoid getting ratelimited/ other issues
+	code, err := checkDomain(domainName)
+	if err != nil {
+		var dnsErr *net.DNSError
+		switch {
+		case errors.As(err, &dnsErr):
+			if dnsErr.IsNotFound {
+				// all good, domain is available
+				break
+			}
+			if dnsErr.IsTemporary || dnsErr.IsTimeout {
+				// transient resolver issue -> "ban" (or defer) and move on
+				banDomain(db, domainName, "temporary DNS failure", &t)
+				return
+			}
+			// Other DNS errors: record reason and return
+			banDomain(db, domainName, "dns error: "+dnsErr.Err, &t)
+			return
+
+		case errors.Is(err, context.DeadlineExceeded):
+			banDomain(db, domainName, "timeout", &t)
+			return
+
+		default:
+			fmt.Println("checkDomain unexpected error for", domainName, ":", err)
+			panic(err)
+		}
+	}
+
+	fmt.Println("Domain:", domainName, "Code:", code)
+	err = saveCode(db, domainName, code, &t)
+	if err != nil {
+		panic(err)
+	}
+}
+
 func verifyDomains(db *sql.DB, domainNames []string) {
 	for i, domainName := range domainNames {
 		fmt.Printf("(%d/%d) ", i+1, len(domainNames))
 		fmt.Println("Checking domain:", domainName)
-		t := time.Now()
-
-		// TODO: circle back to check errors
-		// TODO: check code to avoid getting ratelimited/ other issues
-		code, err := checkDomain(domainName)
-		if err != nil {
-			var dnsErr *net.DNSError
-			switch {
-			case errors.As(err, &dnsErr):
-				if dnsErr.IsNotFound {
-					// all good, domain is available
-					continue
-				}
-				if dnsErr.IsTemporary || dnsErr.IsTimeout {
-					// transient resolver issue -> "ban" (or defer) and move on
-					banDomain(db, domainName, "temporary DNS failure", &t)
-					continue
-				}
-				// Other DNS errors: record reason and continue
-				banDomain(db, domainName, "dns error: "+dnsErr.Err, &t)
-				continue
-
-			case errors.Is(err, context.DeadlineExceeded):
-				banDomain(db, domainName, "timeout", &t)
-				continue
-
-			default:
-				fmt.Println("checkDomain unexpected error for", domainName, ":", err)
-				panic(err)
-			}
-		}
-
-		fmt.Println("Domain:", domainName, "Code:", code)
-		err = saveCode(db, domainName, code, &t)
-		if err != nil {
-			panic(err)
-		}
+		verifyDomain(db, domainName)
 	}
 }
 
@@ -81,7 +84,9 @@ func main() {
 	defer db.Close()
 
 	if CHECK_DOMAINS {
-		err = bulkEnsureRows(db, generateCandidates([]string{"net"}))
+		generatedCandidates := generateCandidates([]string{"net"})
+		fmt.Println("Generated", len(generatedCandidates), "candidates")
+		err = bulkEnsureRows(db, generatedCandidates)
 		if err != nil {
 			panic(err)
 		}
@@ -91,9 +96,11 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		fmt.Println("Loaded", len(pendingDomains), "candidates")
 
 		// list of domain names to check
 		candidates := filterBadCandidates(db, pendingDomains)
+		fmt.Println("Filtered to", len(candidates), "candidates")
 		verifyDomains(db, candidates)
 	}
 
