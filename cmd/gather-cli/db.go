@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS checks (
   checked_at DATETIME NULL     -- last attempt time (NULL until first attempt)
 );
 CREATE INDEX IF NOT EXISTS idx_checks_code ON checks(code);
+CREATE TABLE IF NOT EXISTS banned (
+  domain TEXT PRIMARY KEY,
+  reason TEXT NULL,
+  ban_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP
+);
 `); err != nil {
 		return nil, err
 	}
@@ -68,6 +73,12 @@ func saveCode(db *sql.DB, domain string, code int, at *time.Time) error {
 	return err
 }
 
+func banDomain(db *sql.DB, domain string, reason string, at *time.Time) error {
+	_, err := db.Exec(
+		`INSERT OR IGNORE INTO banned(domain, reason, ban_at) VALUES(?, ?, ?)`, domain, reason, toSQLiteDT(at),
+	)
+	return err
+}
 func loadPendingFromDB(db *sql.DB) ([]string, error) {
 	rows, err := db.Query(`SELECT domain FROM checks WHERE code IS NULL OR code NOT IN (200,404)`)
 	if err != nil {
