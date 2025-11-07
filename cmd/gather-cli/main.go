@@ -26,6 +26,7 @@ func checkDomain(domainName string) (int, error) {
 
 func verifyDomains(saveDomainCode func(string, int, *time.Time), domainNames []string) {
 	for i, domainName := range domainNames {
+		fmt.Printf("(%d/%d) ", i+1, len(domainNames))
 		fmt.Println("Checking domain:", domainName)
 
 		// TODO: circle back to check errors
