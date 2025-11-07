@@ -99,7 +99,7 @@ func loadBannedFromDB(db *sql.DB) (map[string]string, error) {
 }
 
 func loadPendingFromDB(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(`SELECT domain FROM checks WHERE code IS NULL OR code NOT IN (200,404)`)
+	rows, err := db.Query(`SELECT domain FROM checks WHERE code IS NULL OR code NOT IN (200,404) ORDER BY domain ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func loadPendingFromDB(db *sql.DB) ([]string, error) {
 }
 
 func loadAvailableFromDB(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(`SELECT domain FROM checks WHERE code = 404`)
+	rows, err := db.Query(`SELECT domain FROM checks WHERE code = 404 ORDER BY domain ASC`)
 	if err != nil {
 		return nil, err
 	}
