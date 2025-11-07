@@ -79,6 +79,25 @@ func banDomain(db *sql.DB, domain string, reason string, at *time.Time) error {
 	)
 	return err
 }
+
+func loadBannedFromDB(db *sql.DB) (map[string]string, error) {
+	rows, err := db.Query(`SELECT domain FROM banned`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]string)
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out[d] = d
+	}
+	return out, rows.Err()
+}
+
 func loadPendingFromDB(db *sql.DB) ([]string, error) {
 	rows, err := db.Query(`SELECT domain FROM checks WHERE code IS NULL OR code NOT IN (200,404)`)
 	if err != nil {

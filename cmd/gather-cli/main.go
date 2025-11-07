@@ -93,7 +93,7 @@ func main() {
 		}
 
 		// list of domain names to check
-		candidates := filterBadCandidates(pendingDomains)
+		candidates := filterBadCandidates(db, pendingDomains)
 		verifyDomains(db, candidates)
 	}
 
