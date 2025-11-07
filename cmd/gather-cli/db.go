@@ -22,8 +22,8 @@ func openDB(dbPath string) (*sql.DB, error) {
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS checks (
   domain TEXT PRIMARY KEY,
-  code INTEGER NULL,           -- HTTP status code (NULL until first attempt)
-  checked_at DATETIME NULL     -- last attempt time (NULL until first attempt)
+  code INTEGER NULL,                                     -- HTTP status code (NULL until first attempt)
+  checked_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP     -- last attempt time (NULL until first attempt)
 );
 CREATE INDEX IF NOT EXISTS idx_checks_code ON checks(code);
 CREATE TABLE IF NOT EXISTS banned (
