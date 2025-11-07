@@ -27,7 +27,7 @@ func checkDomain(domainName string) (int, error) {
 	return code, err
 }
 
-func verifyDomain(db *sql.DB, domainName string) {
+func verifyDomain(db *sql.DB, domainName string) int {
 	t := time.Now()
 	// TODO: circle back to check errors
 	// TODO: check code to avoid getting ratelimited/ other issues
@@ -43,19 +43,19 @@ func verifyDomain(db *sql.DB, domainName string) {
 			if dnsErr.IsTemporary || dnsErr.IsTimeout {
 				// transient resolver issue -> "ban" (or defer) and move on
 				banDomain(db, domainName, "temporary DNS failure", &t)
-				return
+				return 0
 			}
 			// Other DNS errors: record reason and return
 			banDomain(db, domainName, "dns error: "+dnsErr.Err, &t)
-			return
+			return 5
 
 		case errors.Is(err, context.DeadlineExceeded):
 			banDomain(db, domainName, "timeout", &t)
-			return
+			return 0
 
 		default:
 			fmt.Println("checkDomain unexpected error for", domainName, ":", err)
-			panic(err)
+			return 15
 		}
 	}
 
@@ -64,6 +64,16 @@ func verifyDomain(db *sql.DB, domainName string) {
 	if err != nil {
 		panic(err)
 	}
+	return 0
+}
+
+func smallBackoff(attempt int) {
+	// cap duration to 500ms + jitter
+	d := time.Duration(50*attempt) * time.Millisecond
+	if d > 500*time.Millisecond {
+		d = 500 * time.Millisecond
+	}
+	time.Sleep(d + time.Duration(rand.Intn(100))*time.Millisecond)
 }
 
 func verifyDomains(db *sql.DB, domainNames []string) {
@@ -74,10 +84,17 @@ func verifyDomains(db *sql.DB, domainNames []string) {
 		shuffledDomains[i], shuffledDomains[j] = shuffledDomains[j], shuffledDomains[i]
 	})
 
+	failed := 0
 	for i, domainName := range domainNames {
 		fmt.Printf("(%d/%d) ", i+1, len(domainNames))
 		fmt.Println("Checking domain:", domainName)
-		verifyDomain(db, domainName)
+		backoffAddition := verifyDomain(db, domainName)
+		if backoffAddition > 0 {
+			failed += backoffAddition
+		} else {
+			failed = 0
+		}
+		smallBackoff(failed)
 	}
 }
 
