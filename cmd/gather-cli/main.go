@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"time"
@@ -66,6 +67,13 @@ func verifyDomain(db *sql.DB, domainName string) {
 }
 
 func verifyDomains(db *sql.DB, domainNames []string) {
+	shuffledDomains := domainNames[:]
+	// seed rand
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(shuffledDomains), func(i, j int) {
+		shuffledDomains[i], shuffledDomains[j] = shuffledDomains[j], shuffledDomains[i]
+	})
+
 	for i, domainName := range domainNames {
 		fmt.Printf("(%d/%d) ", i+1, len(domainNames))
 		fmt.Println("Checking domain:", domainName)
