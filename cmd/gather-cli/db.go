@@ -9,7 +9,7 @@ import (
 
 type Row struct {
 	Domain string
-	Code   *int // nil until set (represented as -1 in badger)
+	Code   *int // nil until set
 	At     *time.Time
 }
 
