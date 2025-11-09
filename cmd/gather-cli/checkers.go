@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -67,7 +66,6 @@ func RdapCheck(domainName string) (int, error) {
 	if err != nil {
 		var ce *rdap.ClientError
 		if errors.As(err, &ce) {
-			fmt.Println("RDAP ClientError:", ce)
 			switch ce.Type {
 			case rdap.ObjectDoesNotExist:
 				// not found

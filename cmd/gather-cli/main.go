@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/rand"
 	"net"
 	"os"
@@ -12,6 +11,8 @@ import (
 	"github.com/khinshankhan/nomex/data/domainban"
 	"github.com/khinshankhan/nomex/data/domaincheck"
 	"github.com/khinshankhan/nomex/infra/sqlite"
+	"github.com/khinshankhan/nomex/services/logx"
+	"github.com/khinshankhan/nomex/services/logx/fields"
 )
 
 func checkDomain(domainName string) (int, error) {
@@ -31,7 +32,9 @@ func checkDomain(domainName string) (int, error) {
 }
 
 func verifyDomain(domaincheckRepo domaincheck.Repository, domainbanRepo domainban.Repository, domainName string) int {
+	logger := logx.GetDefaultLogger()
 	t := time.Now()
+
 	// TODO: circle back to check errors
 	// TODO: check code to avoid getting ratelimited/ other issues
 	code, err := checkDomain(domainName)
@@ -79,12 +82,18 @@ func verifyDomain(domaincheckRepo domaincheck.Repository, domainbanRepo domainba
 			return 0
 
 		default:
-			fmt.Println("checkDomain unexpected error for", domainName, ":", err)
+			logger.Warn("checkDomain unexpected error",
+				fields.String("domain", domainName),
+				fields.Error(err),
+			)
 			return 15
 		}
 	}
 
-	fmt.Println("Domain:", domainName, "Code:", code)
+	logger.Info("Domain checked",
+		fields.String("domain", domainName),
+		fields.Int("code", code),
+	)
 	err = domaincheckRepo.SaveDomainCheck(
 		domaincheck.DomainCheck{
 			Domain: domainName,
@@ -109,16 +118,22 @@ func smallBackoff(attempt int) {
 }
 
 func verifyDomains(domaincheckRepo domaincheck.Repository, domainbanRepo domainban.Repository, domainNames []string) {
+	logger := logx.GetDefaultLogger()
+
 	// seed rand
 	rand.Seed(time.Now().UnixNano())
 	rand.Shuffle(len(domainNames), func(i, j int) {
 		domainNames[i], domainNames[j] = domainNames[j], domainNames[i]
 	})
 
+	total := len(domainNames)
 	failed := 0
 	for i, domainName := range domainNames {
-		fmt.Printf("(%d/%d) ", i+1, len(domainNames))
-		fmt.Println("Checking domain:", domainName)
+		logger.Info("Starting domain verify",
+			fields.Int("i", i+1),
+			fields.Int("n", total),
+			fields.String("name", domainName),
+		)
 		backoffAddition := verifyDomain(domaincheckRepo, domainbanRepo, domainName)
 		if backoffAddition > 0 {
 			failed += backoffAddition
@@ -130,9 +145,10 @@ func verifyDomains(domaincheckRepo domaincheck.Repository, domainbanRepo domainb
 }
 
 // TODO: make this a flag
-const CHECK_DOMAINS = false
+const CHECK_DOMAINS = true
 
 func main() {
+	logger := logx.GetDefaultLogger()
 	conn, err := sqlite.GetConnection(
 		sqlite.DefaultOptions("db/domains.sqlite"),
 	)
@@ -146,7 +162,10 @@ func main() {
 
 	if CHECK_DOMAINS {
 		generatedCandidates := generateCandidates([]string{"net"})
-		fmt.Println("Generated", len(generatedCandidates), "candidates")
+		logger.Info(
+			"Generated candidates",
+			fields.Int("n", len(generatedCandidates)),
+		)
 
 		// ensure all candidates are in the database so they're "queued" for checking
 		err = domaincheckRepo.BulkEnsureDomainChecks(generatedCandidates)
@@ -159,11 +178,17 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println("Loaded", len(pendingDomains), "candidates")
+		logger.Info(
+			"Loaded candidates",
+			fields.Int("n", len(pendingDomains)),
+		)
 
 		// list of domain names to check
 		candidates := filterBadCandidates(domainbanRepo, pendingDomains)
-		fmt.Println("Filtered to", len(candidates), "candidates")
+		logger.Info(
+			"Filtered candidates",
+			fields.Int("n", len(candidates)),
+		)
 		verifyDomains(domaincheckRepo, domainbanRepo, candidates)
 	}
 

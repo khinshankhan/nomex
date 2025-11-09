@@ -15,6 +15,14 @@ github.com/jarcoal/httpmock v1.3.0 h1:2RJ8GP0IIaWwcC9Fp2BmVi8Kog3v2Hn7VXM3fTd+nu
 github.com/jarcoal/httpmock v1.3.0/go.mod h1:3yb8rc4BI7TCBhFY8ng0gjuLKJNquuDNiPaZjnENuYg=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
+github.com/khinshankhan/logstox v0.0.0-20250916022935-3133b2edbe53 h1:EKqMx/7tpe/4By+boMvXXBMClsIjXXzbnsDGX+9kaWI=
+github.com/khinshankhan/logstox v0.0.0-20250916022935-3133b2edbe53/go.mod h1:CoUe8PK8fqQSKRgPHJYASBoDwmJlTZ6MtBygyrdtckU=
+github.com/khinshankhan/logstox v0.0.0-20251109042951-63c5216d262f h1:FFaWaHruCqwVwS9YBY7ovWxoj2sqMC46nuU6jzqbXVA=
+github.com/khinshankhan/logstox v0.0.0-20251109042951-63c5216d262f/go.mod h1:CoUe8PK8fqQSKRgPHJYASBoDwmJlTZ6MtBygyrdtckU=
+github.com/khinshankhan/logstox/backend/zapx v0.0.0-20250916022935-3133b2edbe53 h1:5KoC5gIsl2tvr3AYxywcsvP1XFSuATXLlugWshE0b7o=
+github.com/khinshankhan/logstox/backend/zapx v0.0.0-20250916022935-3133b2edbe53/go.mod h1:IZSI5PDxVKRdwyr0LEqeXNL9kTVjzt/RvwQ+FfjylpM=
+github.com/khinshankhan/logstox/backend/zapx v0.0.0-20251109042951-63c5216d262f h1:bGIgN3n0flTBM5XUJ8VFP7PVJK0a55CzU0MNQeRpyXc=
+github.com/khinshankhan/logstox/backend/zapx v0.0.0-20251109042951-63c5216d262f/go.mod h1:IZSI5PDxVKRdwyr0LEqeXNL9kTVjzt/RvwQ+FfjylpM=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/mitchellh/go-homedir v1.1.0 h1:lukF9ziXFxDFPkA1vsr5zpc1XuPDn/wFntq5mG+4E0Y=
@@ -33,6 +41,12 @@ github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOf
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/xhit/go-str2duration/v2 v2.1.0 h1:lxklc02Drh6ynqX+DdPyp5pCKLUQpRT8bp8Ydu2Bstc=
 github.com/xhit/go-str2duration/v2 v2.1.0/go.mod h1:ohY8p+0f07DiV6Em5LKB0s2YpLtXVyJfNt1+BlmyAsU=
+go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
+go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
+go.uber.org/multierr v1.11.0 h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=
+go.uber.org/multierr v1.11.0/go.mod h1:20+QtiLqy0Nd6FdQB9TLXag12DsQkrbs3htMFfDN80Y=
+go.uber.org/zap v1.27.0 h1:aJMhYGrd5QSmlpLMr2MftRKl7t8J8PTZPA732ud/XR8=
+go.uber.org/zap v1.27.0/go.mod h1:GB2qFLM7cTU87MWRP2mPIjqfIDnGu+VIO4V/SdhGo2E=
 golang.org/x/crypto v0.39.0 h1:SHs+kF4LP+f+p14esP5jAoDpHU8Gu/v9lFRK6IT5imM=
 golang.org/x/crypto v0.39.0/go.mod h1:L+Xg3Wf6HoL4Bn4238Z6ft6KfEpN0tJGo53AAPC632U=
 golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b h1:M2rDM6z3Fhozi9O7NWsxAkg/yqS/lQJ6PmkyIV3YP+o=
