@@ -14,53 +14,17 @@ import (
 	"github.com/khinshankhan/nomex/services/logx/fields"
 	"github.com/khinshankhan/nomex/usecases/verifydomain"
 
-	// side-effect import to autoload .env files, should run before anything else
-	_ "github.com/joho/godotenv/autoload"
+	"github.com/joho/godotenv"
 )
 
-func smallBackoff(attempt int) {
-	// cap duration to 500ms + jitter
-	d := time.Duration(50*attempt) * time.Millisecond
-	if d > 500*time.Millisecond {
-		d = 500 * time.Millisecond
+func init() {
+	// load .env file for development
+	// necessary for loading platform specific variables like useragent
+	if err := godotenv.Load(); err != nil {
+		panic(err)
 	}
-	time.Sleep(d + time.Duration(rand.Intn(100))*time.Millisecond)
-}
 
-func verifyDomains(
-	verifydomainUsecase verifydomain.Usecases,
-	domainNames []string,
-) {
-	logger := logx.GetDefaultLogger()
-
-	// seed rand
 	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(domainNames), func(i, j int) {
-		domainNames[i], domainNames[j] = domainNames[j], domainNames[i]
-	})
-
-	total := len(domainNames)
-	failed := 0
-	for i, domainName := range domainNames {
-		logger.Info("Starting domain verify",
-			fields.Int("i", i+1),
-			fields.Int("n", total),
-			fields.String("name", domainName),
-		)
-
-		result := verifydomainUsecase.VerifyOne(domainName)
-		logger.Info("Finished domain verify",
-			fields.String("name", domainName),
-			fields.Int("code", *result.CheckedDomain.Code),
-		)
-
-		if result.Err != nil {
-			failed += 1
-		} else {
-			failed = 0
-		}
-		smallBackoff(failed * 15)
-	}
 }
 
 // TODO: make this a flag
@@ -136,10 +100,7 @@ func main() {
 			rdapClient,
 		)
 
-		verifyDomains(
-			verifydomainUsecase,
-			candidates,
-		)
+		_ = verifydomainUsecase.VerifyBatch(candidates)
 	}
 
 	availableDomains, err := domaincheckRepo.GetAvailableDomains()

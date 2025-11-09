@@ -3,6 +3,7 @@ package verifydomain
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"net"
 	"time"
 
@@ -18,6 +19,7 @@ type (
 	// Usecases declares available services
 	Usecases interface {
 		VerifyOne(domainName string) VerificationResult
+		VerifyBatch(domainNames []string) []VerificationResult
 	}
 
 	// usecases declares the dependencies for the service
@@ -34,8 +36,10 @@ type (
 func New(
 	domaincheckRepo domaincheck.Repository,
 	domainbanRepo domainban.Repository,
+
 	dnsResolver *dnsresolver.Resolver,
 	rdapClient *rdapclient.Client,
+
 ) Usecases {
 	return &usecases{
 		domaincheckRepo: domaincheckRepo,
@@ -136,4 +140,47 @@ func (u *usecases) VerifyOne(domainName string) VerificationResult {
 		CheckedDomain: checkedDomain,
 		Err:           nil,
 	}
+}
+
+func (u *usecases) VerifyBatch(domainNames []string) []VerificationResult {
+	logger := logx.GetDefaultLogger()
+
+	total := len(domainNames)
+	results := make([]VerificationResult, 0, total)
+	failed := 0
+	for i, domainName := range domainNames {
+		logger.Info("Verifying",
+			fields.Int("i", i+1),
+			fields.Int("n", total),
+			fields.String("name", domainName),
+		)
+
+		result := u.VerifyOne(domainName)
+		results = append(results, result)
+
+		logger.Info("Verified",
+			fields.String("name", domainName),
+			fields.Int("code", *result.CheckedDomain.Code),
+		)
+
+		if result.Err != nil {
+			failed += 1
+		} else {
+			failed = 0
+		}
+
+		// ensure tiny politeness delay of at least 1
+		weight := (failed * 15) + 1
+		smallBackoff(weight)
+	}
+	return results
+}
+
+func smallBackoff(weight int) {
+	// cap duration to 1000ms + jitter
+	d := time.Duration(50*weight) * time.Millisecond
+	if d > 100*time.Millisecond {
+		d = 100 * time.Millisecond
+	}
+	time.Sleep(d + time.Duration(rand.Intn(100))*time.Millisecond)
 }
