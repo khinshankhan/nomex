@@ -11,6 +11,7 @@ import (
 	"github.com/khinshankhan/nomex/adapters/rdapclient"
 	"github.com/khinshankhan/nomex/data/domainban"
 	"github.com/khinshankhan/nomex/data/domaincheck"
+	"github.com/khinshankhan/nomex/platform/backoff"
 	"github.com/khinshankhan/nomex/services/logx"
 	"github.com/khinshankhan/nomex/services/logx/fields"
 )
@@ -29,6 +30,8 @@ type (
 
 		dnsResolver *dnsresolver.Resolver
 		rdapClient  *rdapclient.Client
+
+		backoffStrategy backoff.Strategy
 	}
 )
 
@@ -44,8 +47,17 @@ func New(
 	return &usecases{
 		domaincheckRepo: domaincheckRepo,
 		domainbanRepo:   domainbanRepo,
-		dnsResolver:     dnsResolver,
-		rdapClient:      rdapClient,
+
+		dnsResolver: dnsResolver,
+		rdapClient:  rdapClient,
+
+		backoffStrategy: backoff.NewFullJitter(
+			backoff.NewJitterConfig{
+				Base: 50 * time.Millisecond,
+				Cap:  8 * time.Second,
+				RNG:  rand.New(rand.NewSource(time.Now().UnixNano())),
+			},
+		),
 	}
 }
 
@@ -148,6 +160,7 @@ func (u *usecases) VerifyBatch(domainNames []string) []VerificationResult {
 	total := len(domainNames)
 	results := make([]VerificationResult, 0, total)
 	failed := 0
+
 	for i, domainName := range domainNames {
 		logger.Info("Verifying",
 			fields.Int("i", i+1),
@@ -169,18 +182,10 @@ func (u *usecases) VerifyBatch(domainNames []string) []VerificationResult {
 			failed = 0
 		}
 
-		// ensure tiny politeness delay of at least 1
-		weight := (failed * 15) + 1
-		smallBackoff(weight)
+		// Use jittered delay scaled by "failed" (attempt count since last failure).
+		// attempt 0 should still wait a tiny bit to avoid stampedes.
+		delay := u.backoffStrategy.Next(failed)
+		time.Sleep(delay)
 	}
 	return results
-}
-
-func smallBackoff(weight int) {
-	// cap duration to 1000ms + jitter
-	d := time.Duration(50*weight) * time.Millisecond
-	if d > 100*time.Millisecond {
-		d = 100 * time.Millisecond
-	}
-	time.Sleep(d + time.Duration(rand.Intn(100))*time.Millisecond)
 }
