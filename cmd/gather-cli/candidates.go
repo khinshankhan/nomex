@@ -15,7 +15,7 @@ func generateCandidates(tlds []string) []string {
 	// TODO: surely there's a more efficient way to do this
 	for _, tld := range tlds {
 		for c1 := 'a'; c1 <= 'z'; c1++ {
-			candidates = append(candidates, fmt.Sprintf("%c.%s", c1, tld), fmt.Sprintf("%c%c.%s", c1, tld))
+			candidates = append(candidates, fmt.Sprintf("%c.%s", c1, tld))
 		}
 	}
 
@@ -36,10 +36,6 @@ func filterBadCandidates(domainbanRepo domainban.Repository, domains []domainche
 	var filtered []string
 	for _, d := range domains {
 		if _, found := bannedDomainLookup[d.Domain]; found {
-			continue
-		}
-
-		if len(d.Domain) > 3+1+3 {
 			continue
 		}
 
