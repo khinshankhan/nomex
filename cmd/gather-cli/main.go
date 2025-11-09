@@ -1,10 +1,7 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"math/rand"
-	"net"
 	"os"
 	"time"
 
@@ -15,92 +12,11 @@ import (
 	"github.com/khinshankhan/nomex/infra/sqlite"
 	"github.com/khinshankhan/nomex/services/logx"
 	"github.com/khinshankhan/nomex/services/logx/fields"
+	"github.com/khinshankhan/nomex/usecases/verifydomain"
 
 	// side-effect import to autoload .env files, should run before anything else
 	_ "github.com/joho/godotenv/autoload"
 )
-
-func verifyDomain(
-	domaincheckRepo domaincheck.Repository,
-	domainbanRepo domainban.Repository,
-	checkDomain func(domainName string) (int, error),
-	domainName string,
-) int {
-	logger := logx.GetDefaultLogger()
-	t := time.Now()
-
-	// TODO: circle back to check errors
-	// TODO: check code to avoid getting ratelimited/ other issues
-	code, err := checkDomain(domainName)
-	if err != nil {
-		var dnsErr *net.DNSError
-		switch {
-		case errors.As(err, &dnsErr):
-			if dnsErr.IsNotFound {
-				// all good, domain is available
-				break
-			}
-			if dnsErr.IsTemporary || dnsErr.IsTimeout {
-				// transient resolver issue -> "ban" (or defer) and move on
-
-				reason := "temporary DNS failure"
-				domainbanRepo.BanDomain(
-					domainban.DomainBan{
-						Domain: domainName,
-						Reason: &reason,
-						At:     &t,
-					},
-				)
-				return 0
-			}
-			// Other DNS errors: record reason and return
-			reason := "DNS error: " + dnsErr.Err
-			domainbanRepo.BanDomain(
-				domainban.DomainBan{
-					Domain: domainName,
-					Reason: &reason,
-					At:     &t,
-				},
-			)
-			return 5
-
-		case errors.Is(err, context.DeadlineExceeded):
-			reason := "timeout"
-			domainbanRepo.BanDomain(
-				domainban.DomainBan{
-					Domain: domainName,
-					Reason: &reason,
-					At:     &t,
-				},
-			)
-			return 0
-
-		default:
-			logger.Warn("checkDomain unexpected error",
-				fields.String("domain", domainName),
-				fields.Error(err),
-			)
-			return 15
-		}
-	}
-
-	logger.Info("Domain checked",
-		fields.String("domain", domainName),
-		fields.Int("code", code),
-	)
-	err = domaincheckRepo.SaveDomainCheck(
-		domaincheck.DomainCheck{
-			Domain: domainName,
-			Code:   &code,
-			At:     &t,
-		},
-	)
-
-	if err != nil {
-		panic(err)
-	}
-	return 0
-}
 
 func smallBackoff(attempt int) {
 	// cap duration to 500ms + jitter
@@ -112,9 +28,7 @@ func smallBackoff(attempt int) {
 }
 
 func verifyDomains(
-	domaincheckRepo domaincheck.Repository,
-	domainbanRepo domainban.Repository,
-	checkDomain func(domainName string) (int, error),
+	verifydomainUsecase verifydomain.Usecases,
 	domainNames []string,
 ) {
 	logger := logx.GetDefaultLogger()
@@ -133,18 +47,19 @@ func verifyDomains(
 			fields.Int("n", total),
 			fields.String("name", domainName),
 		)
-		backoffAddition := verifyDomain(
-			domaincheckRepo,
-			domainbanRepo,
-			checkDomain,
-			domainName,
+
+		result := verifydomainUsecase.VerifyOne(domainName)
+		logger.Info("Finished domain verify",
+			fields.String("name", domainName),
+			fields.Int("code", *result.CheckedDomain.Code),
 		)
-		if backoffAddition > 0 {
-			failed += backoffAddition
+
+		if result.Err != nil {
+			failed += 1
 		} else {
 			failed = 0
 		}
-		smallBackoff(failed)
+		smallBackoff(failed * 15)
 	}
 }
 
@@ -214,26 +129,15 @@ func main() {
 			Timeout: 30 * time.Second,
 		})
 
-		checkDomain := func(domainName string) (int, error) {
-			taken, err := dnsResolver.Check(context.Background(), domainName)
-			if err != nil {
-				return 500, err
-			}
-
-			// we can trust that the domain is taken
-			if taken {
-				return 200, nil
-			}
-
-			// domain not found via dns, double-check with rdap
-			code, err := rdapClient.Check(domainName)
-			return code, err
-		}
-
-		verifyDomains(
+		verifydomainUsecase := verifydomain.New(
 			domaincheckRepo,
 			domainbanRepo,
-			checkDomain,
+			dnsResolver,
+			rdapClient,
+		)
+
+		verifyDomains(
+			verifydomainUsecase,
 			candidates,
 		)
 	}
