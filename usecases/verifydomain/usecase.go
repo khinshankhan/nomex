@@ -61,19 +61,70 @@ func New(
 	}
 }
 
-func (u *usecases) checkDomain(domainName string) (int, error) {
-	taken, err := u.dnsResolver.Check(context.Background(), domainName)
+func shouldRetryRDAP(code int, err error) bool {
+	if code == 429 || (code >= 500 && code <= 599) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && (dnsErr.IsTimeout || dnsErr.IsTemporary) {
+		// TODO: we should be retrying in theory but our logic currently has bad support for that since we rely on just
+		// a basic dns lookup
+		return false
+	}
+	// respect caller context
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	// transport error without code = allow retry
+	return err != nil && code == 0
+}
+
+func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error) {
+	logger := logx.GetDefaultLogger()
+
+	// TODO: use a global limiter to avoid spamming RDAP servers when doing concurrent checks
+	const maxAttempts = 5
+	var lastCode int
+	var lastErr error
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		code, err := u.rdapClient.Check(domain)
+		lastCode, lastErr = code, err
+
+		if !shouldRetryRDAP(code, err) {
+			return code, err
+		}
+
+		logger.Warn("rdap check failed, will retry",
+			fields.String("domain", domain),
+			fields.Int("code", code),
+			fields.Error(err),
+			fields.Int("attempt", attempt+1),
+		)
+
+		// jittered backoff per attempt
+		select {
+		case <-ctx.Done():
+			return lastCode, ctx.Err()
+		case <-time.After(u.backoffStrategy.Next(attempt)):
+		}
+	}
+	return lastCode, lastErr
+}
+
+func (u *usecases) checkDomain(ctx context.Context, domainName string) (int, error) {
+	taken, err := u.dnsResolver.Check(ctx, domainName)
 	if err != nil {
 		return 500, err
 	}
 
-	// we can trust DNS if it says domain is taken
+	// we can trust dns if it says domain is taken
 	if taken {
 		return 200, nil
 	}
 
-	// domain is not found in DNS, double-check with rdap
-	code, err := u.rdapClient.Check(domainName)
+	// domain is not found in dns, double-check with rdap (with retries)
+	code, err := u.rdapWithRetry(ctx, domainName)
 	return code, err
 }
 
@@ -88,7 +139,12 @@ func (u *usecases) VerifyOne(domainName string) VerificationResult {
 
 	// TODO: circle back to check errors
 	// TODO: check code to avoid getting ratelimited/ other issues
-	code, err := u.checkDomain(domainName)
+
+	// short, per-domain timeout so one slow request doesn't block the batch
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	code, err := u.checkDomain(ctx, domainName)
 	checkedDomain := domaincheck.DomainCheck{
 		Domain: domainName,
 		Code:   &code,
