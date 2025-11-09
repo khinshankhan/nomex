@@ -31,7 +31,7 @@ type (
 		dnsResolver *dnsresolver.Resolver
 		rdapClient  *rdapclient.Client
 
-		backoffStrategy backoff.Strategy
+		newBackoff func() backoff.Strategy
 	}
 )
 
@@ -42,7 +42,6 @@ func New(
 
 	dnsResolver *dnsresolver.Resolver,
 	rdapClient *rdapclient.Client,
-
 ) Usecases {
 	return &usecases{
 		domaincheckRepo: domaincheckRepo,
@@ -51,13 +50,14 @@ func New(
 		dnsResolver: dnsResolver,
 		rdapClient:  rdapClient,
 
-		backoffStrategy: backoff.NewFullJitter(
-			backoff.NewJitterConfig{
-				Base: 50 * time.Millisecond,
+		// per-call jitter: create a new strategy with its own RNG
+		newBackoff: func() backoff.Strategy {
+			return backoff.NewJitter(backoff.NewJitterConfig{
+				Base: 250 * time.Millisecond,
 				Cap:  8 * time.Second,
 				RNG:  rand.New(rand.NewSource(time.Now().UnixNano())),
-			},
-		),
+			})
+		},
 	}
 }
 
@@ -91,6 +91,7 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 	const maxAttempts = 5
 	var lastCode int
 	var lastErr error
+	backoffStrategy := u.newBackoff()
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		code, err := u.rdapClient.Check(ctx, domain)
@@ -112,7 +113,7 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 			return lastCode, ctx.Err()
 		// use jittered delay exponentially scaled by number of failed attempts.
 		// attempt 0 should still wait a tiny bit to avoid stampedes.
-		case <-time.After(u.backoffStrategy.Next(attempt)):
+		case <-time.After(backoffStrategy.Next(attempt)):
 		}
 	}
 
