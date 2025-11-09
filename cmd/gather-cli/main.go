@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"math/rand"
 	"net"
 	"os"
 	"time"
+
+	"github.com/khinshankhan/nomex/data/domainban"
+	"github.com/khinshankhan/nomex/data/domaincheck"
+	"github.com/khinshankhan/nomex/infra/sqlite"
 )
 
 func checkDomain(domainName string) (int, error) {
@@ -27,7 +30,7 @@ func checkDomain(domainName string) (int, error) {
 	return code, err
 }
 
-func verifyDomain(db *sql.DB, domainName string) int {
+func verifyDomain(domaincheckRepo domaincheck.Repository, domainbanRepo domainban.Repository, domainName string) int {
 	t := time.Now()
 	// TODO: circle back to check errors
 	// TODO: check code to avoid getting ratelimited/ other issues
@@ -42,15 +45,37 @@ func verifyDomain(db *sql.DB, domainName string) int {
 			}
 			if dnsErr.IsTemporary || dnsErr.IsTimeout {
 				// transient resolver issue -> "ban" (or defer) and move on
-				banDomain(db, domainName, "temporary DNS failure", &t)
+
+				reason := "temporary DNS failure"
+				domainbanRepo.BanDomain(
+					domainban.DomainBan{
+						Domain: domainName,
+						Reason: &reason,
+						At:     &t,
+					},
+				)
 				return 0
 			}
 			// Other DNS errors: record reason and return
-			banDomain(db, domainName, "dns error: "+dnsErr.Err, &t)
+			reason := "DNS error: " + dnsErr.Err
+			domainbanRepo.BanDomain(
+				domainban.DomainBan{
+					Domain: domainName,
+					Reason: &reason,
+					At:     &t,
+				},
+			)
 			return 5
 
 		case errors.Is(err, context.DeadlineExceeded):
-			banDomain(db, domainName, "timeout", &t)
+			reason := "timeout"
+			domainbanRepo.BanDomain(
+				domainban.DomainBan{
+					Domain: domainName,
+					Reason: &reason,
+					At:     &t,
+				},
+			)
 			return 0
 
 		default:
@@ -60,7 +85,14 @@ func verifyDomain(db *sql.DB, domainName string) int {
 	}
 
 	fmt.Println("Domain:", domainName, "Code:", code)
-	err = saveCode(db, domainName, code, &t)
+	err = domaincheckRepo.SaveDomainCheck(
+		domaincheck.DomainCheck{
+			Domain: domainName,
+			Code:   &code,
+			At:     &t,
+		},
+	)
+
 	if err != nil {
 		panic(err)
 	}
@@ -76,19 +108,18 @@ func smallBackoff(attempt int) {
 	time.Sleep(d + time.Duration(rand.Intn(100))*time.Millisecond)
 }
 
-func verifyDomains(db *sql.DB, domainNames []string) {
-	shuffledDomains := domainNames[:]
+func verifyDomains(domaincheckRepo domaincheck.Repository, domainbanRepo domainban.Repository, domainNames []string) {
 	// seed rand
 	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(shuffledDomains), func(i, j int) {
-		shuffledDomains[i], shuffledDomains[j] = shuffledDomains[j], shuffledDomains[i]
+	rand.Shuffle(len(domainNames), func(i, j int) {
+		domainNames[i], domainNames[j] = domainNames[j], domainNames[i]
 	})
 
 	failed := 0
 	for i, domainName := range domainNames {
 		fmt.Printf("(%d/%d) ", i+1, len(domainNames))
 		fmt.Println("Checking domain:", domainName)
-		backoffAddition := verifyDomain(db, domainName)
+		backoffAddition := verifyDomain(domaincheckRepo, domainbanRepo, domainName)
 		if backoffAddition > 0 {
 			failed += backoffAddition
 		} else {
@@ -102,34 +133,41 @@ func verifyDomains(db *sql.DB, domainNames []string) {
 const CHECK_DOMAINS = false
 
 func main() {
-	db, err := openDB("domains.sqlite")
+	conn, err := sqlite.GetConnection(
+		sqlite.DefaultOptions("db/domains.sqlite"),
+	)
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close()
+	defer sqlite.CloseConnection(conn)
+
+	domaincheckRepo := domaincheck.NewRepository(conn)
+	domainbanRepo := domainban.NewRepository(conn)
 
 	if CHECK_DOMAINS {
 		generatedCandidates := generateCandidates([]string{"net"})
 		fmt.Println("Generated", len(generatedCandidates), "candidates")
-		err = bulkEnsureRows(db, generatedCandidates)
+
+		// ensure all candidates are in the database so they're "queued" for checking
+		err = domaincheckRepo.BulkEnsureDomainChecks(generatedCandidates)
 		if err != nil {
 			panic(err)
 		}
 
 		// NOTE: this loads any pre existing pending domains from the database
-		pendingDomains, err := loadPendingFromDB(db)
+		pendingDomains, err := domaincheckRepo.GetPendingDomains()
 		if err != nil {
 			panic(err)
 		}
 		fmt.Println("Loaded", len(pendingDomains), "candidates")
 
 		// list of domain names to check
-		candidates := filterBadCandidates(db, pendingDomains)
+		candidates := filterBadCandidates(domainbanRepo, pendingDomains)
 		fmt.Println("Filtered to", len(candidates), "candidates")
-		verifyDomains(db, candidates)
+		verifyDomains(domaincheckRepo, domainbanRepo, candidates)
 	}
 
-	availableDomains, err := loadAvailableFromDB(db)
+	availableDomains, err := domaincheckRepo.GetAvailableDomains()
 	if err != nil {
 		panic(err)
 	}
@@ -140,6 +178,6 @@ func main() {
 	}
 	defer f.Close()
 	for _, d := range availableDomains {
-		f.WriteString(d + "\n")
+		f.WriteString(d.Domain + "\n")
 	}
 }

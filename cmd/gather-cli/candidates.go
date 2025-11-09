@@ -1,8 +1,10 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
+
+	"github.com/khinshankhan/nomex/data/domainban"
+	"github.com/khinshankhan/nomex/data/domaincheck"
 )
 
 // TODO: we need to greatly decrease the candidate space
@@ -20,23 +22,28 @@ func generateCandidates(tlds []string) []string {
 	return candidates
 }
 
-func filterBadCandidates(db *sql.DB, domains []string) []string {
-	bannedDomains, err := loadBannedFromDB(db)
+func filterBadCandidates(domainbanRepo domainban.Repository, domains []domaincheck.DomainCheck) []string {
+	bannedDomainRecords, err := domainbanRepo.GetAllBannedDomains()
 	if err != nil {
 		panic(err)
 	}
 
+	bannedDomainLookup := make(map[string]struct{})
+	for _, record := range bannedDomainRecords {
+		bannedDomainLookup[record.Domain] = struct{}{}
+	}
+
 	var filtered []string
 	for _, d := range domains {
-		if _, found := bannedDomains[d]; found {
+		if _, found := bannedDomainLookup[d.Domain]; found {
 			continue
 		}
 
-		if len(d) > 3+1+3 {
+		if len(d.Domain) > 3+1+3 {
 			continue
 		}
 
-		filtered = append(filtered, d)
+		filtered = append(filtered, d.Domain)
 	}
 
 	return filtered
