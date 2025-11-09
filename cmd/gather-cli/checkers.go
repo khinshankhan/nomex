@@ -27,7 +27,7 @@ func init() {
 	rdapClient = &rdap.Client{
 		HTTP:      httpClient,
 		Bootstrap: b,
-		UserAgent: userAgent(),
+		UserAgent: getUserAgent(),
 	}
 }
 

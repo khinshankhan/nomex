@@ -13,6 +13,9 @@ import (
 	"github.com/khinshankhan/nomex/infra/sqlite"
 	"github.com/khinshankhan/nomex/services/logx"
 	"github.com/khinshankhan/nomex/services/logx/fields"
+
+	// side-effect import to autoload .env files, should run before anything else
+	_ "github.com/joho/godotenv/autoload"
 )
 
 func checkDomain(domainName string) (int, error) {
@@ -146,6 +149,12 @@ func verifyDomains(domaincheckRepo domaincheck.Repository, domainbanRepo domainb
 
 // TODO: make this a flag
 const CHECK_DOMAINS = true
+
+// Version and BuildData get replaced during build with the commit hash and time of build
+var (
+	CommitHash = ""
+	BuildDate  = ""
+)
 
 func main() {
 	logger := logx.GetDefaultLogger()
