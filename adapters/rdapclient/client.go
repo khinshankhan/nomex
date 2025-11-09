@@ -47,19 +47,14 @@ func New(cfg Config) (*Client, error) {
 }
 
 // QueryDomainRaw preserves RDAP problem details instead of collapsing them.
-func (c *Client) QueryDomainRaw(domainName string) (*rdap.Response, error) {
+func (c *Client) QueryDomainRaw(ctx context.Context, domainName string) (*rdap.Response, error) {
 	req := &rdap.Request{
 		Type:  rdap.DomainRequest,
 		Query: domainName,
 	}
-
-	// TODO: allow caller to pass context?
-	ctx, cancelFunc := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancelFunc()
-
 	req = req.WithContext(ctx)
-	resp, err := c.rc.Do(req)
 
+	resp, err := c.rc.Do(req)
 	return resp, err
 }
 
@@ -70,8 +65,8 @@ func (c *Client) QueryDomainRaw(domainName string) (*rdap.Response, error) {
  * data, this method is preferred over DNS check however it may be slower due to network latency and RDAP server
  * response times and it can be rate limited by RDAP servers... it's also bad actor to spam RDAP servers with requests.
  */
-func (c *Client) Check(domainName string) (int, error) {
-	_, err := c.QueryDomainRaw(domainName)
+func (c *Client) Check(ctx context.Context, domainName string) (int, error) {
+	_, err := c.QueryDomainRaw(ctx, domainName)
 
 	// registered
 	if err == nil {

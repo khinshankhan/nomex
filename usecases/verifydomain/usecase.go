@@ -62,20 +62,25 @@ func New(
 }
 
 func shouldRetryRDAP(code int, err error) bool {
-	if code == 429 || (code >= 500 && code <= 599) {
+	// 429 are rate limited and 502/503/504 are upstream/server/transient conditions.
+	if code == 429 || code == 502 || code == 503 || code == 504 {
 		return true
 	}
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) && (dnsErr.IsTimeout || dnsErr.IsTemporary) {
-		// TODO: we should be retrying in theory but our logic currently has bad support for that since we rely on just
-		// a basic dns lookup
-		return false
-	}
-	// respect caller context
+
+	// respect caller context: if the context is done, don't keep retrying locally.
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return false
 	}
-	// transport error without code = allow retry
+
+	// net.Error covers common transient network failures.
+	// transport layer hiccups (dns lookup timeout, tcp reset, etc) are generally retryable.
+	// NOTE: temporary errors are not well-defined so they've been deprecated, but we lose nothing by checking it here.
+	var ne net.Error
+	if errors.As(err, &ne) && (ne.Timeout() || ne.Temporary()) {
+		return true
+	}
+
+	// transport error without code = retryable
 	return err != nil && code == 0
 }
 
@@ -88,7 +93,7 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 	var lastErr error
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		code, err := u.rdapClient.Check(domain)
+		code, err := u.rdapClient.Check(ctx, domain)
 		lastCode, lastErr = code, err
 
 		if !shouldRetryRDAP(code, err) {
@@ -102,13 +107,21 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 			fields.Int("attempt", attempt+1),
 		)
 
-		// jittered backoff per attempt
 		select {
 		case <-ctx.Done():
 			return lastCode, ctx.Err()
+		// use jittered delay exponentially scaled by number of failed attempts.
+		// attempt 0 should still wait a tiny bit to avoid stampedes.
 		case <-time.After(u.backoffStrategy.Next(attempt)):
 		}
 	}
+
+	logger.Warn("rdap retries exhausted",
+		fields.String("domain", domain),
+		fields.Int("attempts", maxAttempts),
+		fields.Int("last_code", lastCode),
+		fields.Error(lastErr),
+	)
 	return lastCode, lastErr
 }
 
@@ -215,8 +228,6 @@ func (u *usecases) VerifyBatch(domainNames []string) []VerificationResult {
 
 	total := len(domainNames)
 	results := make([]VerificationResult, 0, total)
-	failed := 0
-
 	for i, domainName := range domainNames {
 		logger.Info("Verifying",
 			fields.Int("i", i+1),
@@ -232,16 +243,8 @@ func (u *usecases) VerifyBatch(domainNames []string) []VerificationResult {
 			fields.Int("code", *result.CheckedDomain.Code),
 		)
 
-		if result.Err != nil {
-			failed += 1
-		} else {
-			failed = 0
-		}
-
-		// Use jittered delay scaled by "failed" (attempt count since last failure).
-		// attempt 0 should still wait a tiny bit to avoid stampedes.
-		delay := u.backoffStrategy.Next(failed)
-		time.Sleep(delay)
+		// optional tiny nap, rdap already does polite retry/backoff
+		time.Sleep(25 * time.Millisecond)
 	}
 	return results
 }
