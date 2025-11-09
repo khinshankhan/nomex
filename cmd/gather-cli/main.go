@@ -8,6 +8,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/khinshankhan/nomex/adapters/dnsresolver"
+	"github.com/khinshankhan/nomex/adapters/rdapclient"
 	"github.com/khinshankhan/nomex/data/domainban"
 	"github.com/khinshankhan/nomex/data/domaincheck"
 	"github.com/khinshankhan/nomex/infra/sqlite"
@@ -18,23 +20,12 @@ import (
 	_ "github.com/joho/godotenv/autoload"
 )
 
-func checkDomain(domainName string) (int, error) {
-	taken, err := DnsCheck(domainName)
-	if err != nil {
-		return 500, err
-	}
-
-	// we can trust that the domain is taken
-	if taken {
-		return 200, nil
-	}
-
-	// domain not found via dns, double-check with rdap
-	code, err := RdapCheck(domainName)
-	return code, err
-}
-
-func verifyDomain(domaincheckRepo domaincheck.Repository, domainbanRepo domainban.Repository, domainName string) int {
+func verifyDomain(
+	domaincheckRepo domaincheck.Repository,
+	domainbanRepo domainban.Repository,
+	checkDomain func(domainName string) (int, error),
+	domainName string,
+) int {
 	logger := logx.GetDefaultLogger()
 	t := time.Now()
 
@@ -120,7 +111,12 @@ func smallBackoff(attempt int) {
 	time.Sleep(d + time.Duration(rand.Intn(100))*time.Millisecond)
 }
 
-func verifyDomains(domaincheckRepo domaincheck.Repository, domainbanRepo domainban.Repository, domainNames []string) {
+func verifyDomains(
+	domaincheckRepo domaincheck.Repository,
+	domainbanRepo domainban.Repository,
+	checkDomain func(domainName string) (int, error),
+	domainNames []string,
+) {
 	logger := logx.GetDefaultLogger()
 
 	// seed rand
@@ -137,7 +133,12 @@ func verifyDomains(domaincheckRepo domaincheck.Repository, domainbanRepo domainb
 			fields.Int("n", total),
 			fields.String("name", domainName),
 		)
-		backoffAddition := verifyDomain(domaincheckRepo, domainbanRepo, domainName)
+		backoffAddition := verifyDomain(
+			domaincheckRepo,
+			domainbanRepo,
+			checkDomain,
+			domainName,
+		)
 		if backoffAddition > 0 {
 			failed += backoffAddition
 		} else {
@@ -198,7 +199,43 @@ func main() {
 			"Filtered candidates",
 			fields.Int("n", len(candidates)),
 		)
-		verifyDomains(domaincheckRepo, domainbanRepo, candidates)
+
+		// verify domains
+		ua := getUserAgent()
+		rdapClient, err := rdapclient.New(rdapclient.Config{
+			UserAgent:  ua,
+			HTTPClient: nil, // use default 10s
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		dnsResolver := dnsresolver.New(dnsresolver.Config{
+			Timeout: 30 * time.Second,
+		})
+
+		checkDomain := func(domainName string) (int, error) {
+			taken, err := dnsResolver.Check(context.Background(), domainName)
+			if err != nil {
+				return 500, err
+			}
+
+			// we can trust that the domain is taken
+			if taken {
+				return 200, nil
+			}
+
+			// domain not found via dns, double-check with rdap
+			code, err := rdapClient.Check(domainName)
+			return code, err
+		}
+
+		verifyDomains(
+			domaincheckRepo,
+			domainbanRepo,
+			checkDomain,
+			candidates,
+		)
 	}
 
 	availableDomains, err := domaincheckRepo.GetAvailableDomains()
