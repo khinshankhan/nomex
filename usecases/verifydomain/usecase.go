@@ -7,6 +7,8 @@ import (
 	"net"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/khinshankhan/nomex/adapters/dnsresolver"
 	"github.com/khinshankhan/nomex/adapters/rdapclient"
 	"github.com/khinshankhan/nomex/data/domainban"
@@ -31,7 +33,9 @@ type (
 		dnsResolver *dnsresolver.Resolver
 		rdapClient  *rdapclient.Client
 
-		newBackoff func() backoff.Strategy
+		rdapMaxAttempts int
+		rdapLimiter     *rate.Limiter
+		newBackoff      func() backoff.Strategy
 	}
 )
 
@@ -50,6 +54,9 @@ func New(
 		dnsResolver: dnsResolver,
 		rdapClient:  rdapClient,
 
+		rdapMaxAttempts: 5,
+		// global RDAP rate limiter: 1 request every 10 seconds
+		rdapLimiter: rate.NewLimiter(rate.Every(10*time.Second), 1),
 		// per-call jitter: create a new strategy with its own RNG
 		newBackoff: func() backoff.Strategy {
 			return backoff.NewJitter(backoff.NewJitterConfig{
@@ -87,13 +94,15 @@ func shouldRetryRDAP(code int, err error) bool {
 func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error) {
 	logger := logx.GetDefaultLogger()
 
-	// TODO: use a global limiter to avoid spamming RDAP servers when doing concurrent checks
-	const maxAttempts = 5
 	var lastCode int
 	var lastErr error
 	backoffStrategy := u.newBackoff()
 
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; attempt < u.rdapMaxAttempts; attempt++ {
+		if err := u.rdapLimiter.Wait(ctx); err != nil {
+			// pretty sure the only error here is context cancellation/timeout
+			return 408, err
+		}
 		code, err := u.rdapClient.Check(ctx, domain)
 		lastCode, lastErr = code, err
 
@@ -119,7 +128,7 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 
 	logger.Warn("rdap retries exhausted",
 		fields.String("domain", domain),
-		fields.Int("attempts", maxAttempts),
+		fields.Int("attempts", u.rdapMaxAttempts),
 		fields.Int("last_code", lastCode),
 		fields.Error(lastErr),
 	)
@@ -155,7 +164,12 @@ func (u *usecases) VerifyOne(ctx context.Context, domainName string) Verificatio
 	// TODO: check code to avoid getting ratelimited/ other issues
 
 	// short, per-domain timeout layered on caller ctx
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(
+		ctx,
+		// NOTE: this should be greater than the max attempts * rps allowed by the rdap limiter * average rdap response
+		// time and account for exponential backoff + n routines running in parallel
+		75*time.Second,
+	)
 	defer cancel()
 
 	code, err := u.checkDomain(ctx, domainName)
