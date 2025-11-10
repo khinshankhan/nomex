@@ -117,12 +117,15 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 			fields.Int("attempt", attempt+1),
 		)
 
-		select {
-		case <-ctx.Done():
-			return lastCode, ctx.Err()
 		// use jittered delay exponentially scaled by number of failed attempts.
 		// attempt 0 should still wait a tiny bit to avoid stampedes.
-		case <-time.After(backoffStrategy.Next(attempt)):
+		sleep := backoffStrategy.Next(attempt)
+		t := time.NewTimer(sleep)
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			return lastCode, ctx.Err()
 		}
 	}
 
