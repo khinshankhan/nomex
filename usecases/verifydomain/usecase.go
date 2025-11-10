@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -36,6 +37,8 @@ type (
 		rdapMaxAttempts int
 		rdapLimiter     *rate.Limiter
 		newBackoff      func() backoff.Strategy
+
+		maxParallel int
 	}
 )
 
@@ -65,6 +68,8 @@ func New(
 				RNG:  rand.New(rand.NewSource(time.Now().UnixNano())),
 			})
 		},
+
+		maxParallel: 16,
 	}
 }
 
@@ -261,25 +266,44 @@ func (u *usecases) VerifyOne(ctx context.Context, domainName string) Verificatio
 func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []VerificationResult {
 	logger := logx.GetDefaultLogger()
 
-	total := len(domainNames)
-	results := make([]VerificationResult, 0, total)
-	for i, domainName := range domainNames {
-		logger.Info("Verifying",
-			fields.Int("i", i+1),
-			fields.Int("n", total),
-			fields.String("name", domainName),
-		)
-
-		result := u.VerifyOne(ctx, domainName)
-		results = append(results, result)
-
-		logger.Info("Verified",
-			fields.String("name", domainName),
-			fields.Int("code", *result.CheckedDomain.Code),
-		)
-
-		// optional tiny nap, rdap already does polite retry/backoff
-		time.Sleep(25 * time.Millisecond)
+	type job struct {
+		i int
+		d string
 	}
+	jobs := make(chan job)
+
+	total := len(domainNames)
+	results := make([]VerificationResult, total)
+
+	var wg sync.WaitGroup
+	worker := func() {
+		defer wg.Done()
+		for j := range jobs {
+			logger.Info("Verifying",
+				fields.Int("i", j.i+1),
+				fields.Int("n", total),
+				fields.String("name", j.d),
+			)
+
+			result := u.VerifyOne(ctx, j.d)
+			results[j.i] = result
+
+			logger.Info("Verified",
+				fields.String("name", j.d),
+				fields.Int("code", *result.CheckedDomain.Code),
+			)
+
+		}
+	}
+	wg.Add(u.maxParallel)
+	for w := 0; w < u.maxParallel; w++ {
+		go worker()
+	}
+
+	for i, d := range domainNames {
+		jobs <- job{i, d}
+	}
+	close(jobs)
+	wg.Wait()
 	return results
 }
