@@ -99,32 +99,49 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 	backoffStrategy := u.newBackoff()
 
 	for attempt := 0; attempt < u.rdapMaxAttempts; attempt++ {
-		if err := u.rdapLimiter.Wait(ctx); err != nil {
-			// pretty sure the only error here is context cancellation/timeout
-			return 408, err
+		// reserve token and check the delay against ctx deadline
+		r := u.rdapLimiter.Reserve()
+		if !r.OK() {
+			return 429, errors.New("limiter burst too small")
 		}
+		delay := r.DelayFrom(time.Now())
+		if deadline, ok := ctx.Deadline(); ok && time.Now().Add(delay).After(deadline) {
+			r.Cancel()
+			return 408, context.DeadlineExceeded
+		}
+
+		// wait for token or ctx cancel
+		tokenT := time.NewTimer(delay)
+		select {
+		case <-tokenT.C:
+		case <-ctx.Done():
+			tokenT.Stop()
+			r.Cancel()
+			return 408, ctx.Err()
+		}
+		// r capacity is consumed here because we proceeded.
+
 		code, err := u.rdapClient.Check(ctx, domain)
 		lastCode, lastErr = code, err
-
 		if !shouldRetryRDAP(code, err) {
 			return code, err
 		}
 
 		logger.Warn("rdap check failed, will retry",
 			fields.String("domain", domain),
+			fields.Int("attempt", attempt+1),
 			fields.Int("code", code),
 			fields.Error(err),
-			fields.Int("attempt", attempt+1),
 		)
 
 		// use jittered delay exponentially scaled by number of failed attempts.
 		// attempt 0 should still wait a tiny bit to avoid stampedes.
 		sleep := backoffStrategy.Next(attempt)
-		t := time.NewTimer(sleep)
+		sleepT := time.NewTimer(sleep)
 		select {
-		case <-t.C:
+		case <-sleepT.C:
 		case <-ctx.Done():
-			t.Stop()
+			sleepT.Stop()
 			return lastCode, ctx.Err()
 		}
 	}
