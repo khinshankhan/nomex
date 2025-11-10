@@ -58,8 +58,8 @@ func New(
 		rdapClient:  rdapClient,
 
 		rdapMaxAttempts: 5,
-		// global RDAP rate limiter: 1 request every 10 seconds
-		rdapLimiter: rate.NewLimiter(rate.Every(10*time.Second), 1),
+		// global RDAP rate limiter: 5 request every 15 seconds
+		rdapLimiter: rate.NewLimiter(rate.Every(15*time.Second), 5),
 		// per-call jitter: create a new strategy with its own RNG
 		newBackoff: func() backoff.Strategy {
 			return backoff.NewJitter(backoff.NewJitterConfig{
