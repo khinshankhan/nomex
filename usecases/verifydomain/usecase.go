@@ -22,7 +22,7 @@ import (
 type (
 	// Usecases declares available services
 	Usecases interface {
-		VerifyOne(ctx context.Context, domainName string) VerificationResult
+		Verify(ctx context.Context, domainName string) VerificationResult
 		VerifyBatch(ctx context.Context, domainNames []string) []VerificationResult
 	}
 
@@ -181,7 +181,7 @@ type VerificationResult struct {
 	Err           error
 }
 
-func (u *usecases) VerifyOne(ctx context.Context, domainName string) VerificationResult {
+func (u *usecases) Verify(ctx context.Context, domainName string) VerificationResult {
 	logger := logx.GetDefaultLogger()
 	t := time.Now()
 
@@ -285,7 +285,7 @@ func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []Veri
 				fields.String("name", j.d),
 			)
 
-			result := u.VerifyOne(ctx, j.d)
+			result := u.Verify(ctx, j.d)
 			results[j.i] = result
 
 			logger.Info("Verified",
