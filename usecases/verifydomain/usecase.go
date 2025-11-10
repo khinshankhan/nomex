@@ -19,8 +19,8 @@ import (
 type (
 	// Usecases declares available services
 	Usecases interface {
-		VerifyOne(domainName string) VerificationResult
-		VerifyBatch(domainNames []string) []VerificationResult
+		VerifyOne(ctx context.Context, domainName string) VerificationResult
+		VerifyBatch(ctx context.Context, domainNames []string) []VerificationResult
 	}
 
 	// usecases declares the dependencies for the service
@@ -147,15 +147,15 @@ type VerificationResult struct {
 	Err           error
 }
 
-func (u *usecases) VerifyOne(domainName string) VerificationResult {
+func (u *usecases) VerifyOne(ctx context.Context, domainName string) VerificationResult {
 	logger := logx.GetDefaultLogger()
 	t := time.Now()
 
 	// TODO: circle back to check errors
 	// TODO: check code to avoid getting ratelimited/ other issues
 
-	// short, per-domain timeout so one slow request doesn't block the batch
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// short, per-domain timeout layered on caller ctx
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	code, err := u.checkDomain(ctx, domainName)
@@ -224,7 +224,7 @@ func (u *usecases) VerifyOne(domainName string) VerificationResult {
 	}
 }
 
-func (u *usecases) VerifyBatch(domainNames []string) []VerificationResult {
+func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []VerificationResult {
 	logger := logx.GetDefaultLogger()
 
 	total := len(domainNames)
@@ -236,7 +236,7 @@ func (u *usecases) VerifyBatch(domainNames []string) []VerificationResult {
 			fields.String("name", domainName),
 		)
 
-		result := u.VerifyOne(domainName)
+		result := u.VerifyOne(ctx, domainName)
 		results = append(results, result)
 
 		logger.Info("Verified",

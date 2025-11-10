@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"math/rand"
 	"os"
 	"time"
@@ -100,7 +101,7 @@ func main() {
 			rdapClient,
 		)
 
-		_ = verifydomainUsecase.VerifyBatch(candidates)
+		_ = verifydomainUsecase.VerifyBatch(context.Background(), candidates)
 	}
 
 	availableDomains, err := domaincheckRepo.GetAvailableDomains()
