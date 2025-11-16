@@ -15,10 +15,10 @@ github.com/jarcoal/httpmock v1.3.0 h1:2RJ8GP0IIaWwcC9Fp2BmVi8Kog3v2Hn7VXM3fTd+nu
 github.com/jarcoal/httpmock v1.3.0/go.mod h1:3yb8rc4BI7TCBhFY8ng0gjuLKJNquuDNiPaZjnENuYg=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
-github.com/khinshankhan/logstox v0.0.0-20251109042951-63c5216d262f h1:FFaWaHruCqwVwS9YBY7ovWxoj2sqMC46nuU6jzqbXVA=
-github.com/khinshankhan/logstox v0.0.0-20251109042951-63c5216d262f/go.mod h1:CoUe8PK8fqQSKRgPHJYASBoDwmJlTZ6MtBygyrdtckU=
-github.com/khinshankhan/logstox/backend/zapx v0.0.0-20251109042951-63c5216d262f h1:bGIgN3n0flTBM5XUJ8VFP7PVJK0a55CzU0MNQeRpyXc=
-github.com/khinshankhan/logstox/backend/zapx v0.0.0-20251109042951-63c5216d262f/go.mod h1:IZSI5PDxVKRdwyr0LEqeXNL9kTVjzt/RvwQ+FfjylpM=
+github.com/khinshankhan/logstox v0.1.0 h1:wB9EQR05jeA+YQUVd+XW0R6yvdM5Rur4Wh5KA97Unrk=
+github.com/khinshankhan/logstox v0.1.0/go.mod h1:CoUe8PK8fqQSKRgPHJYASBoDwmJlTZ6MtBygyrdtckU=
+github.com/khinshankhan/logstox/backend/zapx v0.1.0 h1:5fg33JtLvokVHz/LaGUWlWzkgLm/nCpFRzi9rRj0AaE=
+github.com/khinshankhan/logstox/backend/zapx v0.1.0/go.mod h1:IZSI5PDxVKRdwyr0LEqeXNL9kTVjzt/RvwQ+FfjylpM=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/mitchellh/go-homedir v1.1.0 h1:lukF9ziXFxDFPkA1vsr5zpc1XuPDn/wFntq5mG+4E0Y=

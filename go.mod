@@ -4,8 +4,8 @@ go 1.25.3
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/khinshankhan/logstox v0.0.0-20251109042951-63c5216d262f
-	github.com/khinshankhan/logstox/backend/zapx v0.0.0-20251109042951-63c5216d262f
+	github.com/khinshankhan/logstox v0.1.0
+	github.com/khinshankhan/logstox/backend/zapx v0.1.0
 	github.com/openrdap/rdap v0.9.1
 	golang.org/x/time v0.14.0
 	modernc.org/sqlite v1.40.0
