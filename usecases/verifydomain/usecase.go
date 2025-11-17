@@ -20,19 +20,20 @@ import (
 )
 
 // per-call jitter: create a new strategy with its own RNG
-func newBackoff() jitter.Strategy {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
+func newBackoff(randomFunc jitter.RandomFunc) jitter.Strategy {
 	return jitter.New(jitter.Config{
-		Base:   250,      // 250 ms
-		Cap:    8_000,    // 8s (in ms units)
-		Random: r.Int63n, // U[0, n)
+		Base:   250,        // 250 ms
+		Cap:    8_000,      // 8s (in ms units)
+		Random: randomFunc, // U[0, n)
 	})
 }
 
 type (
 	// Usecases declares available services
 	Usecases interface {
+		VerifyRaw(backoffStrategy jitter.Strategy, ctx context.Context, domainName string) VerificationResult
+		VerifyBatchRaw(newBackoffStrategy func(workerId int) jitter.Strategy, ctx context.Context, domainNames []string) []VerificationResult
+
 		Verify(ctx context.Context, domainName string) VerificationResult
 		VerifyBatch(ctx context.Context, domainNames []string) []VerificationResult
 	}
@@ -98,12 +99,11 @@ func shouldRetryRDAP(code int, err error) bool {
 	return err != nil && code == 0
 }
 
-func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error) {
+func (u *usecases) rdapWithRetry(backoffStrategy jitter.Strategy, ctx context.Context, domain string) (int, error) {
 	logger := logx.GetDefaultLogger()
 
 	var lastCode int
 	var lastErr error
-	backoffStrategy := newBackoff()
 
 	for attempt := 0; attempt < u.rdapMaxAttempts; attempt++ {
 		// reserve token and check the delay against ctx deadline
@@ -163,7 +163,7 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 	return lastCode, lastErr
 }
 
-func (u *usecases) checkDomain(ctx context.Context, domainName string) (int, error) {
+func (u *usecases) checkDomain(backoffStrategy jitter.Strategy, ctx context.Context, domainName string) (int, error) {
 	taken, err := u.dnsResolver.Check(ctx, domainName)
 	if err != nil {
 		return 500, err
@@ -175,7 +175,7 @@ func (u *usecases) checkDomain(ctx context.Context, domainName string) (int, err
 	}
 
 	// domain is not found in dns, double-check with rdap (with retries)
-	code, err := u.rdapWithRetry(ctx, domainName)
+	code, err := u.rdapWithRetry(backoffStrategy, ctx, domainName)
 	return code, err
 }
 
@@ -184,7 +184,7 @@ type VerificationResult struct {
 	Err           error
 }
 
-func (u *usecases) Verify(ctx context.Context, domainName string) VerificationResult {
+func (u *usecases) VerifyRaw(backoffStrategy jitter.Strategy, ctx context.Context, domainName string) VerificationResult {
 	logger := logx.GetDefaultLogger()
 	t := time.Now()
 
@@ -200,7 +200,7 @@ func (u *usecases) Verify(ctx context.Context, domainName string) VerificationRe
 	)
 	defer cancel()
 
-	code, err := u.checkDomain(ctx, domainName)
+	code, err := u.checkDomain(backoffStrategy, ctx, domainName)
 	checkedDomain := domaincheck.DomainCheck{
 		Domain: domainName,
 		Code:   &code,
@@ -266,7 +266,20 @@ func (u *usecases) Verify(ctx context.Context, domainName string) VerificationRe
 	}
 }
 
-func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []VerificationResult {
+func (u *usecases) Verify(ctx context.Context, domainName string) VerificationResult {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	backoffStrategy := newBackoff(
+		r.Int63n,
+	)
+
+	return u.VerifyRaw(backoffStrategy, ctx, domainName)
+}
+
+func (u *usecases) VerifyBatchRaw(
+	newBackoffStrategy func(workerId int) jitter.Strategy,
+	ctx context.Context,
+	domainNames []string,
+) []VerificationResult {
 	logger := logx.GetDefaultLogger()
 
 	type job struct {
@@ -279,8 +292,13 @@ func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []Veri
 	results := make([]VerificationResult, total)
 
 	var wg sync.WaitGroup
-	worker := func() {
+	worker := func(workerId int) {
 		defer wg.Done()
+
+		backoffStrategy := newBackoffStrategy(
+			// seed with workerId with a bit of magnitude to ensure different sequences
+			workerId * 10_000,
+		)
 		for j := range jobs {
 			logger.Info("Verifying",
 				fields.Int("i", j.i+1),
@@ -288,7 +306,7 @@ func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []Veri
 				fields.String("name", j.d),
 			)
 
-			result := u.Verify(ctx, j.d)
+			result := u.VerifyRaw(backoffStrategy, ctx, j.d)
 			results[j.i] = result
 
 			logger.Info("Verified",
@@ -300,7 +318,7 @@ func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []Veri
 	}
 	wg.Add(u.maxParallel)
 	for w := 0; w < u.maxParallel; w++ {
-		go worker()
+		go worker(w)
 	}
 
 	for i, d := range domainNames {
@@ -309,4 +327,15 @@ func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []Veri
 	close(jobs)
 	wg.Wait()
 	return results
+}
+
+func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []VerificationResult {
+	newBackoffStrategy := func(workerId int) jitter.Strategy {
+		r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(workerId)))
+		return newBackoff(
+			r.Int63n,
+		)
+	}
+
+	return u.VerifyBatchRaw(newBackoffStrategy, ctx, domainNames)
 }
