@@ -10,14 +10,25 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/khinshankhan/jitter-go"
 	"github.com/khinshankhan/nomex/adapters/dnsresolver"
 	"github.com/khinshankhan/nomex/adapters/rdapclient"
 	"github.com/khinshankhan/nomex/data/domainban"
 	"github.com/khinshankhan/nomex/data/domaincheck"
-	"github.com/khinshankhan/nomex/platform/backoff"
 	"github.com/khinshankhan/nomex/services/logx"
 	"github.com/khinshankhan/nomex/services/logx/fields"
 )
+
+// per-call jitter: create a new strategy with its own RNG
+func newBackoff() jitter.Strategy {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	return jitter.New(jitter.Config{
+		Base:   250,      // 250 ms
+		Cap:    8_000,    // 8s (in ms units)
+		Random: r.Int63n, // U[0, n)
+	})
+}
 
 type (
 	// Usecases declares available services
@@ -36,7 +47,6 @@ type (
 
 		rdapMaxAttempts int
 		rdapLimiter     *rate.Limiter
-		newBackoff      func() backoff.Strategy
 
 		maxParallel int
 	}
@@ -60,14 +70,6 @@ func New(
 		rdapMaxAttempts: 5,
 		// global RDAP rate limiter: 5 request every 15 seconds
 		rdapLimiter: rate.NewLimiter(rate.Every(15*time.Second), 5),
-		// per-call jitter: create a new strategy with its own RNG
-		newBackoff: func() backoff.Strategy {
-			return backoff.NewJitter(backoff.NewJitterConfig{
-				Base: 250 * time.Millisecond,
-				Cap:  8 * time.Second,
-				RNG:  rand.New(rand.NewSource(time.Now().UnixNano())),
-			})
-		},
 
 		maxParallel: 16,
 	}
@@ -101,7 +103,7 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 
 	var lastCode int
 	var lastErr error
-	backoffStrategy := u.newBackoff()
+	backoffStrategy := newBackoff()
 
 	for attempt := 0; attempt < u.rdapMaxAttempts; attempt++ {
 		// reserve token and check the delay against ctx deadline
@@ -141,7 +143,8 @@ func (u *usecases) rdapWithRetry(ctx context.Context, domain string) (int, error
 
 		// use jittered delay exponentially scaled by number of failed attempts.
 		// attempt 0 should still wait a tiny bit to avoid stampedes.
-		sleep := backoffStrategy.Next(attempt)
+		sleepMs := backoffStrategy.Next(attempt)
+		sleep := time.Duration(sleepMs) * time.Millisecond
 		sleepT := time.NewTimer(sleep)
 		select {
 		case <-sleepT.C:

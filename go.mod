@@ -4,6 +4,7 @@ go 1.25.3
 
 require (
 	github.com/joho/godotenv v1.5.1
+	github.com/khinshankhan/jitter-go v1.0.0
 	github.com/khinshankhan/logstox v0.1.0
 	github.com/khinshankhan/logstox/backend/zapx v0.1.0
 	github.com/openrdap/rdap v0.9.1
