@@ -32,10 +32,10 @@ type (
 	// Usecases declares available services
 	Usecases interface {
 		VerifyRaw(backoffStrategy jitter.Strategy, ctx context.Context, domainName string) VerificationResult
-		VerifyBatchRaw(newBackoffStrategy func(workerId int) jitter.Strategy, ctx context.Context, domainNames []string) []VerificationResult
-
 		Verify(ctx context.Context, domainName string) VerificationResult
-		VerifyBatch(ctx context.Context, domainNames []string) []VerificationResult
+
+		VerifyBatchRaw(newBackoffStrategy func(workerId int) jitter.Strategy, maxParallel int, ctx context.Context, domainNames []string) []VerificationResult
+		VerifyBatch(maxParallel int, ctx context.Context, domainNames []string) []VerificationResult
 	}
 
 	// usecases declares the dependencies for the service
@@ -48,8 +48,6 @@ type (
 
 		rdapMaxAttempts int
 		rdapLimiter     *rate.Limiter
-
-		maxParallel int
 	}
 )
 
@@ -71,8 +69,6 @@ func New(
 		rdapMaxAttempts: 5,
 		// global RDAP rate limiter: 5 request every 15 seconds
 		rdapLimiter: rate.NewLimiter(rate.Every(15*time.Second), 5),
-
-		maxParallel: 16,
 	}
 }
 
@@ -277,6 +273,7 @@ func (u *usecases) Verify(ctx context.Context, domainName string) VerificationRe
 
 func (u *usecases) VerifyBatchRaw(
 	newBackoffStrategy func(workerId int) jitter.Strategy,
+	maxParallel int,
 	ctx context.Context,
 	domainNames []string,
 ) []VerificationResult {
@@ -316,8 +313,8 @@ func (u *usecases) VerifyBatchRaw(
 
 		}
 	}
-	wg.Add(u.maxParallel)
-	for w := 0; w < u.maxParallel; w++ {
+	wg.Add(maxParallel)
+	for w := 0; w < maxParallel; w++ {
 		go worker(w)
 	}
 
@@ -329,7 +326,11 @@ func (u *usecases) VerifyBatchRaw(
 	return results
 }
 
-func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []VerificationResult {
+func (u *usecases) VerifyBatch(
+	maxParallel int,
+	ctx context.Context,
+	domainNames []string,
+) []VerificationResult {
 	newBackoffStrategy := func(workerId int) jitter.Strategy {
 		r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(workerId)))
 		return newBackoff(
@@ -337,5 +338,5 @@ func (u *usecases) VerifyBatch(ctx context.Context, domainNames []string) []Veri
 		)
 	}
 
-	return u.VerifyBatchRaw(newBackoffStrategy, ctx, domainNames)
+	return u.VerifyBatchRaw(newBackoffStrategy, maxParallel, ctx, domainNames)
 }

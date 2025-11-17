@@ -101,7 +101,8 @@ func main() {
 			rdapClient,
 		)
 
-		_ = verifydomainUsecase.VerifyBatch(context.Background(), candidates)
+		maxParallel := 16
+		_ = verifydomainUsecase.VerifyBatch(maxParallel, context.Background(), candidates)
 	}
 
 	availableDomains, err := domaincheckRepo.GetAvailableDomains()
