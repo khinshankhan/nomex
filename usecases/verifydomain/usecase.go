@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/khinshankhan/jitter-go"
+	"github.com/khinshankhan/jitter-go/v2"
 	"github.com/khinshankhan/nomex/adapters/dnsresolver"
 	"github.com/khinshankhan/nomex/adapters/rdapclient"
 	"github.com/khinshankhan/nomex/data/domainban"
@@ -21,11 +21,16 @@ import (
 
 // per-call jitter: create a new strategy with its own RNG
 func newBackoff(randomFunc jitter.RandomFunc) jitter.Strategy {
-	return jitter.New(jitter.Config{
+	backoffStrategy, err := jitter.New(jitter.Config{
 		Base:   250,        // 250 ms
 		Cap:    8_000,      // 8s (in ms units)
 		Random: randomFunc, // U[0, n)
 	})
+
+	if err != nil {
+		panic("failed to create jitter strategy: " + err.Error())
+	}
+	return backoffStrategy
 }
 
 type (
