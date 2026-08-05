@@ -37,6 +37,8 @@ func New(cfg Config) (*Client, error) {
 	// uses ~/.openrdap by default, they say default but it's not configurable :/
 	// https://github.com/openrdap/rdap/blob/master/bootstrap/cache/disk_cache.go
 	b.Cache = cache.NewDiskCache()
+	// we want near infinite caching as the bootstrap files change very infrequently however go can't do infinite so we do 10 years
+	b.Cache.SetTimeout(time.Hour * 24 * 365 * 10)
 
 	rc := &rdap.Client{
 		HTTP:      httpClient,
