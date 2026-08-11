@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/khinshankhan/nomex/version"
+	"github.com/khinshankhan/nomex/platform"
 	"golang.org/x/sync/errgroup"
 	"log"
 	"os"
@@ -30,6 +30,8 @@ func run(ctx context.Context, args []string) error {
 		return errors.New("no subcommand given")
 	}
 
+	version := platform.Version("nomex")
+
 	// TODO: probably parse flags
 	switch cmd := args[0]; cmd {
 	case "serve":
@@ -37,9 +39,17 @@ func run(ctx context.Context, args []string) error {
 	case "version":
 		fmt.Fprint(
 			os.Stderr,
-			version.
-				Version("nomex").
-				String(),
+			version.String(),
+		)
+		return nil
+	case "ua":
+		fmt.Fprint(
+			os.Stderr,
+			platform.
+				UserAgent(
+					version,
+					platform.UserAgentOptions{},
+				),
 		)
 		return nil
 	case "help", "-h", "--help":

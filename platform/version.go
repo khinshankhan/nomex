@@ -1,11 +1,11 @@
-package version
+package platform
 
 import (
 	"runtime/debug"
 )
 
-// Info is the build identity split into its component parts.
-type Info struct {
+// VersionInfo is the build identity split into its component parts.
+type VersionInfo struct {
 	// Module is the main module path.
 	Module string
 	// Version is the best available display version: the VCS revision when
@@ -20,8 +20,8 @@ type Info struct {
 }
 
 // Version returns the module path and build identity as separate parts.
-func Version(name string) *Info {
-	info := Info{Version: "unknown"}
+func Version(name string) *VersionInfo {
+	info := VersionInfo{Version: "unknown"}
 
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -54,7 +54,7 @@ func Version(name string) *Info {
 // String reports the module path and best available version from
 // embedded build info: VCS revision for source builds, module version for
 // proxy installs, "unknown" when neither exists (e.g. tarball builds).
-func (info *Info) String() string {
+func (info *VersionInfo) String() string {
 	version := info.Version
 	if info.Commit != "" {
 		if info.Date != "" {
