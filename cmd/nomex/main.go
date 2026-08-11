@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/khinshankhan/nomex/version"
+	"golang.org/x/sync/errgroup"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-
-	"golang.org/x/sync/errgroup"
 )
 
 func main() {
@@ -34,6 +34,14 @@ func run(ctx context.Context, args []string) error {
 	switch cmd := args[0]; cmd {
 	case "serve":
 		return runServe(ctx)
+	case "version":
+		fmt.Fprint(
+			os.Stderr,
+			version.
+				Version("nomex").
+				String(),
+		)
+		return nil
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -49,6 +57,7 @@ func usage() {
 usage:
   nomex serve           run the HTTP API
   nomex help            this message
+  nomex version         display build info
 
 `)
 }
