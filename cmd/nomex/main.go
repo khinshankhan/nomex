@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/khinshankhan/nomex/controller"
 	"github.com/khinshankhan/nomex/platform"
 	"golang.org/x/sync/errgroup"
 	"log"
@@ -80,7 +81,7 @@ func runServe(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		return runHTTPServer(ctx)
+		return controller.RunHTTPServer(ctx)
 	})
 
 	return g.Wait()

@@ -1,4 +1,4 @@
-package main
+package controller
 
 import (
 	"context"
@@ -7,11 +7,13 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/khinshankhan/nomex/controller/handler"
 )
 
 const (
 	// defaultAddr is where serve listens.
-	defaultAddr = ":8080"
+	defaultAddr = 8080
 
 	// shutdownGrace bounds how long in-flight requests have to finish once a
 	// shutdown starts. Without a bound a single hung request holds the process
@@ -19,10 +21,10 @@ const (
 	shutdownGrace = 10 * time.Second
 )
 
-// runHTTPServer runs the HTTP API until the context is cancelled.
-func runHTTPServer(ctx context.Context) error {
+// RunHTTPServer runs the HTTP API until the context is cancelled.
+func RunHTTPServer(ctx context.Context) error {
 	// TODO: allow flags to customize
-	addr := defaultAddr
+	addr := fmt.Sprintf(":%d", defaultAddr)
 	return newHTTPServer(addr).run(ctx)
 }
 
@@ -32,10 +34,15 @@ type httpServer struct {
 }
 
 func newHTTPServer(addr string) *httpServer {
+	mux := routes()
+
+	// TODO: add middleware like CORS here
+	handler := mux
+
 	return &httpServer{
 		srv: &http.Server{
 			Addr:    addr,
-			Handler: routes(),
+			Handler: handler,
 		},
 	}
 }
@@ -82,9 +89,8 @@ func (s *httpServer) run(ctx context.Context) error {
 func routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "ok")
-	})
+	// Health endpoint
+	mux.HandleFunc("GET /api/healthz", handler.HealthHandler)
 
 	return mux
 }
