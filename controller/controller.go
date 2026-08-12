@@ -35,10 +35,12 @@ type httpServer struct {
 }
 
 func newHTTPServer(addr string) *httpServer {
-	// TODO: add middleware like CORS here
+	// First listed runs outermost, so Recover sees panics from everything
+	// inside it, including BlackHole.
 	// TODO: add CORS here
 	handler := middleware.Chain(
 		middleware.Recover,
+		middleware.BlackHole("/api"),
 	)(routes())
 
 	return &httpServer{
