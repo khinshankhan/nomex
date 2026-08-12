@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/khinshankhan/nomex/controller/handler"
+	"github.com/khinshankhan/nomex/controller/middleware"
 )
 
 const (
@@ -34,10 +35,11 @@ type httpServer struct {
 }
 
 func newHTTPServer(addr string) *httpServer {
-	mux := routes()
-
 	// TODO: add middleware like CORS here
-	handler := mux
+	// TODO: add CORS here
+	handler := middleware.Chain(
+		middleware.Recover,
+	)(routes())
 
 	return &httpServer{
 		srv: &http.Server{
