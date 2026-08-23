@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
 )
 
 const dueChecks = `-- name: DueChecks :many
@@ -96,4 +97,31 @@ func (q *Queries) GetCheck(ctx context.Context, domain string) (Check, error) {
 		&i.LabelLen,
 	)
 	return i, err
+}
+
+const upsertCheck = `-- name: UpsertCheck :exec
+INSERT INTO checks (domain, status, fresh_until, priority)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(domain) DO UPDATE SET
+  status      = excluded.status,
+  fresh_until = excluded.fresh_until,
+  priority    = MAX(checks.priority, excluded.priority)
+`
+
+type UpsertCheckParams struct {
+	Domain     string
+	Status     string
+	FreshUntil time.Time
+	Priority   int64
+}
+
+// Generated columns are omitted deliberately: naming one is an error.
+func (q *Queries) UpsertCheck(ctx context.Context, arg UpsertCheckParams) error {
+	_, err := q.db.ExecContext(ctx, upsertCheck,
+		arg.Domain,
+		arg.Status,
+		arg.FreshUntil,
+		arg.Priority,
+	)
+	return err
 }

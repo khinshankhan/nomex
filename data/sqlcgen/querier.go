@@ -12,6 +12,8 @@ type Querier interface {
 	DueChecks(ctx context.Context, limit int64) ([]string, error)
 	FilterChecks(ctx context.Context, arg FilterChecksParams) ([]string, error)
 	GetCheck(ctx context.Context, domain string) (Check, error)
+	// Generated columns are omitted deliberately: naming one is an error.
+	UpsertCheck(ctx context.Context, arg UpsertCheckParams) error
 }
 
 var _ Querier = (*Queries)(nil)
