@@ -92,6 +92,15 @@ func (db *DB) Close() error {
 	return db.sql.Close()
 }
 
+// Exec runs a statement outside the generated query set.
+//
+// For DDL and maintenance -- applying a schema in tests, VACUUM, ANALYZE.
+// Everything with a shape belongs in queries/ so it is typed and checked.
+func (db *DB) Exec(ctx context.Context, stmt string, args ...any) error {
+	_, err := db.sql.ExecContext(ctx, stmt, args...)
+	return err
+}
+
 // Tx runs fn in a transaction, rolling back if it returns an error.
 //
 // The Queries handed to fn is bound to the transaction; the receiver's own

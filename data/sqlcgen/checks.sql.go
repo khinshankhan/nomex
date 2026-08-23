@@ -10,6 +10,59 @@ import (
 	"time"
 )
 
+const countBySuffixLen = `-- name: CountBySuffixLen :many
+SELECT suffix, label_len, status, COUNT(*) AS n
+FROM checks
+GROUP BY suffix, label_len, status
+ORDER BY suffix, label_len, status
+`
+
+type CountBySuffixLenRow struct {
+	Suffix   string
+	LabelLen int64
+	Status   string
+	N        int64
+}
+
+func (q *Queries) CountBySuffixLen(ctx context.Context) ([]CountBySuffixLenRow, error) {
+	rows, err := q.db.QueryContext(ctx, countBySuffixLen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountBySuffixLenRow{}
+	for rows.Next() {
+		var i CountBySuffixLenRow
+		if err := rows.Scan(
+			&i.Suffix,
+			&i.LabelLen,
+			&i.Status,
+			&i.N,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const countChecks = `-- name: CountChecks :one
+SELECT COUNT(*) FROM checks
+`
+
+func (q *Queries) CountChecks(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countChecks)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const dueChecks = `-- name: DueChecks :many
 SELECT domain FROM checks
 WHERE fresh_until < datetime('now')
@@ -97,6 +150,31 @@ func (q *Queries) GetCheck(ctx context.Context, domain string) (Check, error) {
 		&i.LabelLen,
 	)
 	return i, err
+}
+
+const seedCheck = `-- name: SeedCheck :execrows
+INSERT OR IGNORE INTO checks (domain, status, fresh_until, priority)
+VALUES (?, 'unchecked', ?, ?)
+`
+
+type SeedCheckParams struct {
+	Domain     string
+	FreshUntil time.Time
+	Priority   int64
+}
+
+// OR IGNORE so re-running a narrower seed over a wider one is a no-op per row
+// rather than resetting status or priority on already-checked domains.
+//
+// execrows rather than exec: the rows-affected count is 1 for a new row and 0
+// for one that was ignored, which is how the seeder reports what it added
+// without counting the table before and after every batch.
+func (q *Queries) SeedCheck(ctx context.Context, arg SeedCheckParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, seedCheck, arg.Domain, arg.FreshUntil, arg.Priority)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertCheck = `-- name: UpsertCheck :exec

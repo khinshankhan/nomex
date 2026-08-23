@@ -13,6 +13,10 @@ import (
 	"syscall"
 )
 
+// defaultDBPath matches the Makefile's DB variable, so the CLI and `make
+// migrate` operate on the same database without configuration.
+const defaultDBPath = "./var/nomex.db"
+
 func main() {
 	// One context every subsystem watches, cancelled on SIGINT/SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -36,6 +40,8 @@ func run(ctx context.Context, args []string) error {
 	switch cmd := args[0]; cmd {
 	case "serve":
 		return runServe(ctx)
+	case "gather":
+		return runGather(ctx, args[1:])
 	case "version":
 		fmt.Fprint(
 			os.Stderr,
@@ -62,10 +68,11 @@ func run(ctx context.Context, args []string) error {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `nomex -- mini experiment to index domain names.
+	fmt.Fprint(os.Stderr, `nomex -- is this domain available, and how much do we trust that answer.
 
 usage:
   nomex serve           run the HTTP API
+  nomex gather          seed candidate domains
   nomex help            this message
   nomex version         display build info
 

@@ -9,9 +9,18 @@ import (
 )
 
 type Querier interface {
+	CountBySuffixLen(ctx context.Context) ([]CountBySuffixLenRow, error)
+	CountChecks(ctx context.Context) (int64, error)
 	DueChecks(ctx context.Context, limit int64) ([]string, error)
 	FilterChecks(ctx context.Context, arg FilterChecksParams) ([]string, error)
 	GetCheck(ctx context.Context, domain string) (Check, error)
+	// OR IGNORE so re-running a narrower seed over a wider one is a no-op per row
+	// rather than resetting status or priority on already-checked domains.
+	//
+	// execrows rather than exec: the rows-affected count is 1 for a new row and 0
+	// for one that was ignored, which is how the seeder reports what it added
+	// without counting the table before and after every batch.
+	SeedCheck(ctx context.Context, arg SeedCheckParams) (int64, error)
 	// Generated columns are omitted deliberately: naming one is an error.
 	UpsertCheck(ctx context.Context, arg UpsertCheckParams) error
 }
