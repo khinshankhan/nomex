@@ -91,3 +91,44 @@ func insert(ctx context.Context, q *sqlcgen.Queries, domain string) error {
 		FreshUntil: time.Now().Add(-time.Hour),
 	})
 }
+
+// The driver writes time.Time in Go's own format unless told otherwise, and
+// SQLite's datetime() cannot parse it -- so the sweep's "is this due" test
+// falls back to string comparison, which agrees by accident often enough to
+// hide the problem.
+func TestTimestampsAreSQLiteReadable(t *testing.T) {
+	db := openTest(t)
+	ctx := t.Context()
+
+	future := time.Now().Add(time.Hour).UTC()
+	if _, err := db.SeedCheck(ctx, sqlcgen.SeedCheckParams{
+		Domain:     "fmt.dev",
+		FreshUntil: future,
+	}); err != nil {
+		t.Fatalf("SeedCheck: %v", err)
+	}
+
+	var parsed *string
+	err := db.sql.QueryRowContext(ctx,
+		`SELECT datetime(fresh_until) FROM checks WHERE domain = 'fmt.dev'`).Scan(&parsed)
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if parsed == nil {
+		var raw string
+		db.sql.QueryRowContext(ctx,
+			`SELECT quote(fresh_until) FROM checks WHERE domain = 'fmt.dev'`).Scan(&raw)
+		t.Fatalf("datetime() could not parse the stored timestamp %s", raw)
+	}
+
+	// And date arithmetic against it has to work, since that is what the
+	// scheduler query does.
+	var due int
+	if err := db.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM checks WHERE domain = 'fmt.dev' AND fresh_until > datetime('now')`).Scan(&due); err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if due != 1 {
+		t.Error("a future fresh_until did not compare as future")
+	}
+}

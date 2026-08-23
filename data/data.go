@@ -49,8 +49,14 @@ func Open(ctx context.Context, path string) (*DB, error) {
 // opens rather than just the first.
 func dsn(path string) string {
 	return "file:" + filepath.ToSlash(path) +
+		// Without this the driver writes time.Time in Go's own format --
+		// "2026-08-23 16:31:45.48 +0000 UTC" -- which SQLite's datetime() and
+		// date arithmetic cannot parse. Comparisons against datetime('now')
+		// then fall back to string ordering, which agrees by accident often
+		// enough to hide the bug.
+		"?_time_format=sqlite" +
 		// Wait rather than returning SQLITE_BUSY the instant a lock is held.
-		"?_pragma=busy_timeout(5000)" +
+		"&_pragma=busy_timeout(5000)" +
 		// Readers do not block the writer and vice versa. Persistent, but set
 		// here so a fresh database gets it without a migration.
 		"&_pragma=journal_mode(WAL)" +
