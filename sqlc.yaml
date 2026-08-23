@@ -1,0 +1,17 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    # Read goose migrations as schema DDL.
+    schema: "migrations"
+    # Annotated SQL queries used to generate the type-safe Querier interface.
+    queries: "queries"
+    gen:
+      go:
+        out: "data/sqlcgen"
+        package: "sqlcgen"
+        # Generate a Querier interface for dependency injection and tests.
+        emit_interface: true
+        # Return an empty slice instead of nil from :many queries with no rows.
+        emit_empty_slices: true
+        # Map nullable values to pointers. SQL NULL becomes nil.
+        emit_pointers_for_null_types: true

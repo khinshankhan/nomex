@@ -1,1 +1,4 @@
 bin
+
+# generated state: the database and its WAL/shm sidecars
+var/

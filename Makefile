@@ -23,6 +23,22 @@ MAKEFLAGS += --no-builtin-rules
 # itself rather than losing the guarantee everywhere else.
 export CGO_ENABLED := 0
 
+# goose reads its configuration from the environment. These are paths and a
+# driver name rather than secrets, and they are identical on every checkout, so
+# they live here instead of in an uncommitted .env that a fresh clone has to
+# reconstruct before `make migrate` works.
+#
+# The driver is "sqlite" (modernc.org/sqlite, pure Go), not "sqlite3"
+# (mattn/go-sqlite3), which needs cgo and would contradict CGO_ENABLED=0 above.
+# The database lives under var/, which is gitignored -- it is generated state,
+# not source. Override for a scratch copy: `make migrate DB=./var/scratch.db`
+# Defined before GOOSE_DBSTRING because := expands immediately.
+DB ?= ./var/nomex.db
+
+export GOOSE_DRIVER := sqlite
+export GOOSE_MIGRATION_DIR := ./migrations
+export GOOSE_DBSTRING := $(DB)
+
 # VARIABLES
 #
 # A service is any ./cmd/*/main.go. An empty cmd/ is fine -- `make build` on no
@@ -49,6 +65,58 @@ $(GOSERVICES): % : ./cmd/%/main.go
 services:
 	@echo $(GOSERVICES)
 
+# MIGRATIONS
+#
+# var/ is created on demand so a fresh clone can run `make migrate` without a
+# setup step; goose will not create the directory itself.
+$(dir $(DB)):
+	mkdir -p $@
+
+.PHONY: migrate
+migrate: | $(dir $(DB))
+	goose up
+
+.PHONY: migrate-status
+migrate-status: | $(dir $(DB))
+	goose status
+
+# one step back, for iterating on the newest migration
+.PHONY: migrate-down
+migrate-down:
+	goose down
+
+# `make migration name=add_foo` -- goose timestamps it
+.PHONY: migration
+migration:
+	@test -n "$(name)" || { echo "usage: make migration name=<snake_case>"; exit 1; }
+	goose create $(name) sql
+
+# rebuild the database from scratch. The migration is edited in place while it
+# is unpushed, and goose will not re-run an applied version, so a reset is how
+# schema changes actually land locally.
+.PHONY: db-reset
+db-reset:
+	rm -f $(DB) $(DB)-wal $(DB)-shm
+	$(MAKE) migrate
+
+# dump the live schema as SQL -- what the database actually has, which is not
+# the same as what migrations/ says once one has been edited in place.
+.PHONY: schema
+schema: | $(dir $(DB))
+	@goose status >/dev/null 2>&1 || true
+	@sqlite3 $(DB) .schema 2>/dev/null || \
+		echo "sqlite3 not found; try: go run modernc.org/sqlite/cmd/sqlite3 $(DB) .schema"
+
+# regenerate the typed query layer from migrations/ + queries/
+.PHONY: sqlc
+sqlc:
+	sqlc generate
+
+# fails rather than rewrites, so CI reports stale generated code
+.PHONY: sqlc-check
+sqlc-check:
+	sqlc diff
+
 # extra flags and a package selector for the test targets, e.g.
 #   make test GOTESTFLAGS=-v
 #   make test GOTESTFLAGS='-run TestFoo -v'
@@ -72,9 +140,11 @@ cover:
 	CGO_ENABLED=1 go test -race -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
 
-# everything CI should gate on
+# everything CI should gate on. sqlc-check is here so generated code that has
+# drifted from migrations/ or queries/ fails the build rather than being
+# discovered later by a confusing type error.
 .PHONY: check
-check: fmt-check vet test
+check: fmt-check vet sqlc-check test
 
 .PHONY: fmt
 fmt:
