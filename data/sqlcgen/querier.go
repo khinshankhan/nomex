@@ -6,14 +6,35 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
 )
 
 type Querier interface {
+	// Only for the three kinds that describe the domain: ErrNoServer,
+	// ErrInvalidQuery, ErrRefused. Everything else goes to attempts.
+	BlockDomain(ctx context.Context, arg BlockDomainParams) error
 	CountBySuffixLen(ctx context.Context) ([]CountBySuffixLenRow, error)
 	CountChecks(ctx context.Context) (int64, error)
+	// Push a row past a failure so the sweep stops returning it. This is what
+	// stands in for consulting attempts.retry_after in the scheduler query.
+	DeferCheck(ctx context.Context, arg DeferCheckParams) error
+	// Work is a staleness query: fresh_until in the past means "check this".
+	//
+	// blocked is excluded here rather than by deleting the row, so a domain that
+	// becomes servable again (a new RDAP endpoint published for its suffix) needs
+	// one DELETE rather than a re-seed. Measured at 1M rows: 65us without the
+	// exclusion, 8.65ms with it -- irrelevant against a rate limit measured in
+	// queries per second.
+	//
+	// retry_after is deliberately NOT consulted. Doing so measured 95ms, 1460x the
+	// unfiltered query, because it cannot use the ordering index. The writer pushes
+	// fresh_until past the retry instant instead, which costs nothing extra.
 	DueChecks(ctx context.Context, limit int64) ([]string, error)
 	FilterChecks(ctx context.Context, arg FilterChecksParams) ([]string, error)
 	GetCheck(ctx context.Context, domain string) (Check, error)
+	PruneAttempts(ctx context.Context, attemptedAt time.Time) (int64, error)
+	RecentAttempts(ctx context.Context, arg RecentAttemptsParams) ([]Attempt, error)
+	RecordAttempt(ctx context.Context, arg RecordAttemptParams) error
 	// OR IGNORE so re-running a narrower seed over a wider one is a no-op per row
 	// rather than resetting status or priority on already-checked domains.
 	//

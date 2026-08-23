@@ -10,6 +10,25 @@ import (
 	"time"
 )
 
+const blockDomain = `-- name: BlockDomain :exec
+INSERT INTO blocked (domain, reason, blocked_at)
+VALUES (?, ?, ?)
+ON CONFLICT(domain) DO UPDATE SET reason = excluded.reason, blocked_at = excluded.blocked_at
+`
+
+type BlockDomainParams struct {
+	Domain    string
+	Reason    string
+	BlockedAt time.Time
+}
+
+// Only for the three kinds that describe the domain: ErrNoServer,
+// ErrInvalidQuery, ErrRefused. Everything else goes to attempts.
+func (q *Queries) BlockDomain(ctx context.Context, arg BlockDomainParams) error {
+	_, err := q.db.ExecContext(ctx, blockDomain, arg.Domain, arg.Reason, arg.BlockedAt)
+	return err
+}
+
 const countBySuffixLen = `-- name: CountBySuffixLen :many
 SELECT suffix, label_len, status, COUNT(*) AS n
 FROM checks
@@ -63,13 +82,41 @@ func (q *Queries) CountChecks(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const deferCheck = `-- name: DeferCheck :exec
+UPDATE checks SET fresh_until = ? WHERE domain = ?
+`
+
+type DeferCheckParams struct {
+	FreshUntil time.Time
+	Domain     string
+}
+
+// Push a row past a failure so the sweep stops returning it. This is what
+// stands in for consulting attempts.retry_after in the scheduler query.
+func (q *Queries) DeferCheck(ctx context.Context, arg DeferCheckParams) error {
+	_, err := q.db.ExecContext(ctx, deferCheck, arg.FreshUntil, arg.Domain)
+	return err
+}
+
 const dueChecks = `-- name: DueChecks :many
-SELECT domain FROM checks
-WHERE fresh_until < datetime('now')
-ORDER BY priority DESC, queued_at ASC
+SELECT domain FROM checks c
+WHERE c.fresh_until < datetime('now')
+  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
+ORDER BY c.priority DESC, c.queued_at ASC
 LIMIT ?
 `
 
+// Work is a staleness query: fresh_until in the past means "check this".
+//
+// blocked is excluded here rather than by deleting the row, so a domain that
+// becomes servable again (a new RDAP endpoint published for its suffix) needs
+// one DELETE rather than a re-seed. Measured at 1M rows: 65us without the
+// exclusion, 8.65ms with it -- irrelevant against a rate limit measured in
+// queries per second.
+//
+// retry_after is deliberately NOT consulted. Doing so measured 95ms, 1460x the
+// unfiltered query, because it cannot use the ordering index. The writer pushes
+// fresh_until past the retry instant instead, which costs nothing extra.
 func (q *Queries) DueChecks(ctx context.Context, limit int64) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, dueChecks, limit)
 	if err != nil {
@@ -150,6 +197,80 @@ func (q *Queries) GetCheck(ctx context.Context, domain string) (Check, error) {
 		&i.LabelLen,
 	)
 	return i, err
+}
+
+const pruneAttempts = `-- name: PruneAttempts :execrows
+DELETE FROM attempts WHERE attempted_at < ?
+`
+
+func (q *Queries) PruneAttempts(ctx context.Context, attemptedAt time.Time) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pruneAttempts, attemptedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const recentAttempts = `-- name: RecentAttempts :many
+SELECT domain, attempted_at, error_kind, retryable, retry_after FROM attempts WHERE domain = ? ORDER BY attempted_at DESC LIMIT ?
+`
+
+type RecentAttemptsParams struct {
+	Domain string
+	Limit  int64
+}
+
+func (q *Queries) RecentAttempts(ctx context.Context, arg RecentAttemptsParams) ([]Attempt, error) {
+	rows, err := q.db.QueryContext(ctx, recentAttempts, arg.Domain, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Attempt{}
+	for rows.Next() {
+		var i Attempt
+		if err := rows.Scan(
+			&i.Domain,
+			&i.AttemptedAt,
+			&i.ErrorKind,
+			&i.Retryable,
+			&i.RetryAfter,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recordAttempt = `-- name: RecordAttempt :exec
+INSERT INTO attempts (domain, attempted_at, error_kind, retryable, retry_after)
+VALUES (?, ?, ?, ?, ?)
+`
+
+type RecordAttemptParams struct {
+	Domain      string
+	AttemptedAt time.Time
+	ErrorKind   string
+	Retryable   bool
+	RetryAfter  *time.Time
+}
+
+func (q *Queries) RecordAttempt(ctx context.Context, arg RecordAttemptParams) error {
+	_, err := q.db.ExecContext(ctx, recordAttempt,
+		arg.Domain,
+		arg.AttemptedAt,
+		arg.ErrorKind,
+		arg.Retryable,
+		arg.RetryAfter,
+	)
+	return err
 }
 
 const seedCheck = `-- name: SeedCheck :execrows

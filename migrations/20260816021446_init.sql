@@ -9,10 +9,10 @@
 CREATE TABLE checks (
   -- NOT NULL because a non-INTEGER PRIMARY KEY accepts NULL in SQLite.
   domain        TEXT NOT NULL PRIMARY KEY,
-  -- unchecked | registered | not_found | unknown
-  status        TEXT NOT NULL,
-  -- dns | rdap | both
-  source        TEXT,
+  -- CHECK rather than a comment: a typo becomes a write error instead of a
+  -- fifth status that nothing queries and nobody notices.
+  status        TEXT NOT NULL CHECK (status IN ('unchecked','registered','not_found','unknown')),
+  source        TEXT CHECK (source IS NULL OR source IN ('dns','rdap','both')),
   checked_at    DATETIME,
   -- past means "work to do"
   fresh_until   DATETIME NOT NULL,
@@ -57,15 +57,25 @@ CREATE INDEX idx_checks_filter ON checks(suffix, label_len, status);
 -- Failures land here, not in checks, so a timeout cannot become an answer.
 -- That conflation is what banned 42k domains in November.
 CREATE TABLE attempts (
-  domain       TEXT NOT NULL,
+  domain       TEXT NOT NULL REFERENCES checks(domain) ON DELETE CASCADE,
   attempted_at DATETIME NOT NULL,
   -- rdap.ErrorKind
   error_kind   TEXT NOT NULL,
   retryable    BOOLEAN NOT NULL,
-  -- from the server's Retry-After
+  -- from the server's Retry-After. Recorded for diagnosis only: the scheduler
+  -- reads fresh_until, which the writer pushes past this instant, because
+  -- consulting attempts from the sweep query measured 1460x slower.
   retry_after  DATETIME,
   PRIMARY KEY (domain, attempted_at)
 );
+
+-- Newest-first per domain: "why did this keep failing" and any retention sweep
+-- both read this way, and the primary key sorts attempted_at ascending.
+CREATE INDEX idx_attempts_recent ON attempts(domain, attempted_at DESC);
+
+-- For deleting old rows. attempts grows without bound otherwise -- one row per
+-- transient failure, forever -- and at sweep volume becomes the largest table.
+CREATE INDEX idx_attempts_age ON attempts(attempted_at);
 
 -- Written from an allowlist, NOT from !rdap.IsRetryable(err). Non-retryable
 -- also covers ErrUnknown (the zero value), ErrTooManyRedirects,
@@ -77,7 +87,7 @@ CREATE TABLE attempts (
 --   ErrInvalidQuery -- malformed name
 --   ErrRefused      -- deliberate rejection; retrying makes it worse
 CREATE TABLE blocked (
-  domain     TEXT NOT NULL PRIMARY KEY,
+  domain     TEXT NOT NULL PRIMARY KEY REFERENCES checks(domain) ON DELETE CASCADE,
   reason     TEXT NOT NULL,
   blocked_at DATETIME NOT NULL
 );
