@@ -10,22 +10,13 @@ import (
 
 // wrapper is the embedded base for every ResponseWriter this package wraps.
 //
-// A bare `struct{ http.ResponseWriter }` silently drops the optional interfaces
-// the server's own writer implements -- Flusher, Hijacker, ReaderFrom, Pusher.
-// Type assertions downstream then fail, and streaming or connection upgrades
-// break in a way that only shows up at runtime, on the one endpoint that needs
-// them.
+// A bare struct{ http.ResponseWriter } drops the optional interfaces the
+// server's writer implements, breaking streaming and upgrades at runtime.
+// Unwrap matters most: http.ResponseController walks it, and without it every
+// SetWriteDeadline returns "feature not supported".
 //
-// Unwrap is the important one: http.ResponseController walks it to reach the
-// underlying writer, so without it every SetWriteDeadline/SetReadDeadline call
-// returns "feature not supported".
-//
-// Forwarding unconditionally is safe because each method checks the underlying
-// writer for the matching interface and reports http.ErrNotSupported when it is
-// absent -- the same error the caller would have seen from a failed assertion.
-// What is lost is the assertion itself: a downstream `w.(http.Hijacker)` now
-// always succeeds. Handlers should prefer http.ResponseController, which
-// reports capability through the returned error.
+// Tradeoff: a downstream w.(http.Hijacker) now always succeeds and fails at
+// call time with ErrNotSupported instead. Prefer http.ResponseController.
 type wrapper struct {
 	http.ResponseWriter
 }

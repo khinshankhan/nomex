@@ -7,20 +7,16 @@ import (
 	"runtime/debug"
 )
 
-// Recover recovers from panics and logs them.
-//
-// The status is only sent when nothing has been written yet: once a handler has
-// flushed a 200 and part of a body, the status line is already on the wire and
-// a second WriteHeader would be ignored with a "superfluous response.WriteHeader"
-// warning. Truncating the response is the honest failure there.
+// Recover turns a panic into a 500, unless the response has already started --
+// once a status is on the wire a second WriteHeader is ignored, so truncating
+// is the honest failure.
 func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rw := &recorder{wrapper: wrapper{ResponseWriter: w}}
 
 		defer func() {
 			if err := recover(); err != nil {
-				// ErrAbortHandler is the documented way for a handler to give
-				// up without noise, so it is re-panicked rather than logged.
+				// ErrAbortHandler is a deliberate silent abort; propagate it.
 				if err == http.ErrAbortHandler {
 					panic(err)
 				}
@@ -54,9 +50,7 @@ func (w *recorder) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// ReadFrom and Flush both put bytes on the wire without going through Write,
-// so each has to mark the response as started or a later panic would try to
-// replace a status that has already been sent.
+// ReadFrom and Flush bypass Write, so both must mark the response as started.
 func (w *recorder) ReadFrom(r io.Reader) (int64, error) {
 	w.wroteHeader = true
 	return w.wrapper.ReadFrom(r)

@@ -12,13 +12,12 @@ type UserAgentOptions struct {
 	// Name is the product token, e.g. "name". Defaults to info.Name.
 	Name string
 
-	// URL is a contact or project address for whoever runs this instance. It
-	// is the only field a registry operator can act on, so it is worth
-	// setting even when everything else is unknown.
+	// URL is a contact address. The only field a registry operator can act
+	// on, so worth setting even when everything else is unknown.
 	URL string
 
-	// Extra carries optional key=value pairs, e.g. service="rdap". Keys are
-	// emitted in sorted order so the header is stable across runs.
+	// Extra carries key=value pairs, e.g. service="rdap". Sorted, so the
+	// header is stable across runs.
 	Extra map[string]string
 }
 
@@ -31,8 +30,7 @@ func UserAgent(info *VersionInfo, opts UserAgentOptions) string {
 	name := token(opts.Name, info.Module)
 	ver := token(info.Version, "unknown")
 	if info.Dirty {
-		// Marked so a misbehaving development build is never mistaken for a
-		// release when it shows up in someone else's logs.
+		// So a dev build is not mistaken for a release in someone's logs.
 		ver += "-dirty"
 	}
 
@@ -63,9 +61,8 @@ func UserAgent(info *VersionInfo, opts UserAgentOptions) string {
 	return sb.String()
 }
 
-// token scrubs s down to RFC 9110 token characters, falling back to def when
-// the input is empty. Only the product and version use this; it is too
-// aggressive for the comment, where "/" and ":" are legal and load-bearing.
+// token scrubs s to RFC 9110 token characters, def when empty. Product and
+// version only -- too aggressive for the comment, where "/" and ":" are legal.
 func token(s, def string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -84,10 +81,8 @@ func token(s, def string) string {
 	}, s)
 }
 
-// comment scrubs s for use inside the parenthesized comment. RFC 9110 allows
-// almost anything there except parens, which would end the comment early, and
-// backslashes, which would start an escape. A URL has to survive this intact,
-// so it is deliberately narrower than token.
+// comment scrubs s for the parenthesized comment. RFC 9110 allows anything
+// there but parens and backslashes. Narrower than token so a URL survives.
 func comment(s string) string {
 	s = strings.TrimSpace(s)
 
@@ -96,8 +91,7 @@ func comment(s string) string {
 		case r == '(', r == ')', r == '\\':
 			return '-'
 		case r < 0x20 || r == 0x7f:
-			// Control characters, including the CR/LF that would otherwise
-			// split this into a second header.
+			// Control chars, incl. the CR/LF that would split the header.
 			return -1
 		default:
 			return r

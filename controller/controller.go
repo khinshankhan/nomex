@@ -16,9 +16,8 @@ const (
 	// defaultAddr is where serve listens.
 	defaultAddr = 8080
 
-	// shutdownGrace bounds how long in-flight requests have to finish once a
-	// shutdown starts. Without a bound a single hung request holds the process
-	// open, which is the opposite of a graceful stop.
+	// shutdownGrace bounds the drain. Unbounded, one hung request holds the
+	// process open forever.
 	shutdownGrace = 10 * time.Second
 )
 
@@ -35,8 +34,7 @@ type httpServer struct {
 }
 
 func newHTTPServer(addr string) *httpServer {
-	// First listed runs outermost, so Recover sees panics from everything
-	// inside it, including BlackHole.
+	// First listed runs outermost, so Recover sees panics from BlackHole too.
 	// TODO: add CORS here
 	handler := middleware.Chain(
 		middleware.Recover,
@@ -59,11 +57,10 @@ func (s *httpServer) run(ctx context.Context) error {
 		listening <- s.srv.ListenAndServe()
 	}()
 
-	// The select is what makes both exits work: ListenAndServe blocks forever,
-	// so a failure has to arrive on a channel while cancellation arrives on the
-	// context. Reporting the listener's error rather than logging it inside a
-	// goroutine matters -- a swallowed "address already in use" would leave the
-	// process running with nothing serving.
+	// ListenAndServe blocks, so a failure arrives on a channel while
+	// cancellation arrives on the context. Returning the listener error rather
+	// than logging it matters: a swallowed "address already in use" would leave
+	// the process up with nothing serving.
 	select {
 	case err := <-listening:
 		// Only reachable when the server stopped on its own.
@@ -72,8 +69,7 @@ func (s *httpServer) run(ctx context.Context) error {
 	case <-ctx.Done():
 		log.Println("shutting down")
 
-		// A fresh context, not ctx: that one is already cancelled, and Shutdown
-		// would abort the drain it is meant to wait for.
+		// Fresh context: ctx is already cancelled and would abort the drain.
 		shutCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
 
@@ -81,8 +77,7 @@ func (s *httpServer) run(ctx context.Context) error {
 			return fmt.Errorf("shutting down: %w", err)
 		}
 
-		// ListenAndServe always returns an error; ErrServerClosed is the one
-		// that means "Shutdown was called", so it is the success case here.
+		// ErrServerClosed means Shutdown was called: the success case.
 		if err := <-listening; !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}

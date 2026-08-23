@@ -14,8 +14,7 @@ import (
 )
 
 func main() {
-	// NotifyContext replaces the usual signal-channel plumbing: one context
-	// that every subsystem watches, cancelled on the first SIGINT or SIGTERM.
+	// One context every subsystem watches, cancelled on SIGINT/SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -75,9 +74,8 @@ usage:
 
 // runServe runs the HTTP server + background tasks.
 func runServe(ctx context.Context) error {
-	// WithContext gives every subsystem a context that is cancelled when any
-	// one of them returns an error, so a dead background task takes the server
-	// down with it rather than leaving a half-running process.
+	// Cancels every subsystem when any one errors, so a dead background task
+	// takes the server with it instead of leaving a half-running process.
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
