@@ -72,24 +72,50 @@ services:
 $(dir $(DB)):
 	mkdir -p $@
 
+# goose logs through the log package, so every line carries a timestamp prefix
+# -- including the status header and its ==== separator, which breaks alignment.
+GOOSE_STRIP_TS = sed -E 's/^[0-9]{4}\/[0-9]{2}\/[0-9]{2} [0-9:]{8}[[:space:]]*//'
+
 .PHONY: migrate
 migrate: | $(dir $(DB))
-	goose up
+	@goose up 2>&1 | $(GOOSE_STRIP_TS)
 
+# goose's own status table does not align its columns and sizes the separator
+# for a narrower row. This joins migrations/ against goose_db_version instead,
+# so unapplied files show as pending rather than being absent.
 .PHONY: migrate-status
 migrate-status: | $(dir $(DB))
-	goose status
+	@applied=$$(test -f $(DB) && sqlite3 -batch -noheader $(DB) \
+		".timer off" ".changes off" \
+		"SELECT version_id || ' ' || datetime(tstamp,'localtime') \
+		 FROM goose_db_version WHERE version_id > 0;" 2>/dev/null || true); \
+	ls $(GOOSE_MIGRATION_DIR)/*.sql 2>/dev/null | awk -v applied="$$applied" '\
+		BEGIN { \
+			n = split(applied, rows, "\n"); \
+			for (i = 1; i <= n; i++) if (rows[i] != "") { \
+				split(rows[i], f, " "); at[f[1]] = f[2] " " f[3]; \
+			} \
+			printf "%-16s %-8s %-20s %s\n", "VERSION", "STATUS", "APPLIED AT", "NAME"; \
+		} \
+		{ \
+			file = $$0; sub(/.*\//, "", file); \
+			split(file, p, "_"); v = p[1]; \
+			name = file; sub(/^[0-9]+_/, "", name); sub(/\.sql$$/, "", name); \
+			printf "%-16s %-8s %-20s %s\n", v, \
+				(v in at ? "applied" : "pending"), \
+				(v in at ? at[v] : "--"), name; \
+		}'
 
 # one step back, for iterating on the newest migration
 .PHONY: migrate-down
 migrate-down:
-	goose down
+	@goose down 2>&1 | $(GOOSE_STRIP_TS)
 
 # `make migration name=add_foo` -- goose timestamps it
 .PHONY: migration
 migration:
 	@test -n "$(name)" || { echo "usage: make migration name=<snake_case>"; exit 1; }
-	goose create $(name) sql
+	@goose create $(name) sql 2>&1 | $(GOOSE_STRIP_TS)
 
 # rebuild the database from scratch. The migration is edited in place while it
 # is unpushed, and goose will not re-run an applied version, so a reset is how
@@ -102,10 +128,9 @@ db-reset:
 # dump the live schema as SQL -- what the database actually has, which is not
 # the same as what migrations/ says once one has been edited in place.
 .PHONY: schema
-schema: | $(dir $(DB))
-	@goose status >/dev/null 2>&1 || true
-	@sqlite3 $(DB) .schema 2>/dev/null || \
-		echo "sqlite3 not found; try: go run modernc.org/sqlite/cmd/sqlite3 $(DB) .schema"
+schema:
+	@test -f $(DB) || { echo "$(DB) does not exist; run make migrate"; exit 1; }
+	@sqlite3 $(DB) .schema
 
 # regenerate the typed query layer from migrations/ + queries/
 .PHONY: sqlc
