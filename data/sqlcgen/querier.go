@@ -15,6 +15,9 @@ type Querier interface {
 	BlockDomain(ctx context.Context, arg BlockDomainParams) error
 	CountBySuffixLen(ctx context.Context) ([]CountBySuffixLenRow, error)
 	CountChecks(ctx context.Context) (int64, error)
+	// Drives the backoff exponent. Bounded by time rather than counting the whole
+	// history, so a domain that failed last year starts fresh.
+	CountRecentFailures(ctx context.Context, arg CountRecentFailuresParams) (int64, error)
 	// Push a row past a failure so the sweep stops returning it. This is what
 	// stands in for consulting attempts.retry_after in the scheduler query.
 	DeferCheck(ctx context.Context, arg DeferCheckParams) error
@@ -32,6 +35,7 @@ type Querier interface {
 	DueChecks(ctx context.Context, limit int64) ([]string, error)
 	FilterChecks(ctx context.Context, arg FilterChecksParams) ([]string, error)
 	GetCheck(ctx context.Context, domain string) (Check, error)
+	IsBlocked(ctx context.Context, domain string) (bool, error)
 	PruneAttempts(ctx context.Context, attemptedAt time.Time) (int64, error)
 	RecentAttempts(ctx context.Context, arg RecentAttemptsParams) ([]Attempt, error)
 	RecordAttempt(ctx context.Context, arg RecordAttemptParams) error
@@ -44,6 +48,8 @@ type Querier interface {
 	SeedCheck(ctx context.Context, arg SeedCheckParams) (int64, error)
 	// Generated columns are omitted deliberately: naming one is an error.
 	UpsertCheck(ctx context.Context, arg UpsertCheckParams) error
+	// The full result path. Generated columns are omitted: naming one is an error.
+	UpsertCheckResult(ctx context.Context, arg UpsertCheckResultParams) error
 }
 
 var _ Querier = (*Queries)(nil)

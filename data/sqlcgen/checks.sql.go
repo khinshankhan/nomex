@@ -82,6 +82,24 @@ func (q *Queries) CountChecks(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countRecentFailures = `-- name: CountRecentFailures :one
+SELECT COUNT(*) FROM attempts WHERE domain = ? AND attempted_at > ?
+`
+
+type CountRecentFailuresParams struct {
+	Domain      string
+	AttemptedAt time.Time
+}
+
+// Drives the backoff exponent. Bounded by time rather than counting the whole
+// history, so a domain that failed last year starts fresh.
+func (q *Queries) CountRecentFailures(ctx context.Context, arg CountRecentFailuresParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRecentFailures, arg.Domain, arg.AttemptedAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deferCheck = `-- name: DeferCheck :exec
 UPDATE checks SET fresh_until = ? WHERE domain = ?
 `
@@ -197,6 +215,17 @@ func (q *Queries) GetCheck(ctx context.Context, domain string) (Check, error) {
 		&i.LabelLen,
 	)
 	return i, err
+}
+
+const isBlocked = `-- name: IsBlocked :one
+SELECT EXISTS (SELECT 1 FROM blocked WHERE domain = ?)
+`
+
+func (q *Queries) IsBlocked(ctx context.Context, domain string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, isBlocked, domain)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const pruneAttempts = `-- name: PruneAttempts :execrows
@@ -321,6 +350,49 @@ func (q *Queries) UpsertCheck(ctx context.Context, arg UpsertCheckParams) error 
 		arg.Status,
 		arg.FreshUntil,
 		arg.Priority,
+	)
+	return err
+}
+
+const upsertCheckResult = `-- name: UpsertCheckResult :exec
+INSERT INTO checks (domain, status, source, checked_at, fresh_until,
+                    expiration, registered_at, server, stale)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(domain) DO UPDATE SET
+  status        = excluded.status,
+  source        = excluded.source,
+  checked_at    = excluded.checked_at,
+  fresh_until   = excluded.fresh_until,
+  expiration    = excluded.expiration,
+  registered_at = excluded.registered_at,
+  server        = excluded.server,
+  stale         = excluded.stale
+`
+
+type UpsertCheckResultParams struct {
+	Domain       string
+	Status       string
+	Source       *string
+	CheckedAt    *time.Time
+	FreshUntil   time.Time
+	Expiration   *time.Time
+	RegisteredAt *time.Time
+	Server       *string
+	Stale        bool
+}
+
+// The full result path. Generated columns are omitted: naming one is an error.
+func (q *Queries) UpsertCheckResult(ctx context.Context, arg UpsertCheckResultParams) error {
+	_, err := q.db.ExecContext(ctx, upsertCheckResult,
+		arg.Domain,
+		arg.Status,
+		arg.Source,
+		arg.CheckedAt,
+		arg.FreshUntil,
+		arg.Expiration,
+		arg.RegisteredAt,
+		arg.Server,
+		arg.Stale,
 	)
 	return err
 }

@@ -72,3 +72,26 @@ DELETE FROM attempts WHERE attempted_at < ?;
 
 -- name: RecentAttempts :many
 SELECT * FROM attempts WHERE domain = ? ORDER BY attempted_at DESC LIMIT ?;
+
+-- name: UpsertCheckResult :exec
+-- The full result path. Generated columns are omitted: naming one is an error.
+INSERT INTO checks (domain, status, source, checked_at, fresh_until,
+                    expiration, registered_at, server, stale)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(domain) DO UPDATE SET
+  status        = excluded.status,
+  source        = excluded.source,
+  checked_at    = excluded.checked_at,
+  fresh_until   = excluded.fresh_until,
+  expiration    = excluded.expiration,
+  registered_at = excluded.registered_at,
+  server        = excluded.server,
+  stale         = excluded.stale;
+
+-- name: CountRecentFailures :one
+-- Drives the backoff exponent. Bounded by time rather than counting the whole
+-- history, so a domain that failed last year starts fresh.
+SELECT COUNT(*) FROM attempts WHERE domain = ? AND attempted_at > ?;
+
+-- name: IsBlocked :one
+SELECT EXISTS (SELECT 1 FROM blocked WHERE domain = ?);
