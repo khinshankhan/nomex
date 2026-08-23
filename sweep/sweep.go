@@ -218,8 +218,10 @@ feed:
 // error is deliberate: a failed lookup should not inflate the backoff.
 func recentFailures(ctx context.Context, db *data.DB, domain string) int {
 	n, err := db.CountRecentFailures(ctx, sqlcgen.CountRecentFailuresParams{
-		Domain:      domain,
-		AttemptedAt: time.Now().Add(-failureWindow),
+		Domain: domain,
+		// Text rather than time.Time: the query casts it for datetime(), and
+		// RFC 3339 is what the driver writes, so the formats match.
+		Since: time.Now().Add(-failureWindow).UTC().Format(time.RFC3339Nano),
 	})
 	if err != nil {
 		log.Printf("[sweep] counting failures for %s: %v", domain, err)

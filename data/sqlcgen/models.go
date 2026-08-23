@@ -5,44 +5,44 @@
 package sqlcgen
 
 import (
-	"time"
+	sqltime "github.com/khinshankhan/nomex/data/sqltime"
 )
 
 type Attempt struct {
 	Domain      string
-	AttemptedAt time.Time
+	AttemptedAt sqltime.UTC
 	ErrorKind   string
 	Retryable   bool
-	RetryAfter  *time.Time
+	RetryAfter  *sqltime.UTC
 }
 
 type Blocked struct {
 	Domain    string
 	Reason    string
-	BlockedAt time.Time
+	BlockedAt sqltime.UTC
 }
 
 type Check struct {
 	Domain       string
 	Status       string
 	Source       *string
-	CheckedAt    *time.Time
-	FreshUntil   time.Time
-	Expiration   *time.Time
-	RegisteredAt *time.Time
+	CheckedAt    *sqltime.UTC
+	FreshUntil   sqltime.UTC
+	Expiration   *sqltime.UTC
+	RegisteredAt *sqltime.UTC
 	Server       *string
 	Stale        bool
 	Priority     int64
-	QueuedAt     time.Time
+	QueuedAt     sqltime.UTC
 	Suffix       string
 	LabelLen     int64
 }
 
 type Server struct {
 	Origin              string
-	LastSuccess         *time.Time
-	LastFailure         *time.Time
+	LastSuccess         *sqltime.UTC
+	LastFailure         *sqltime.UTC
 	ConsecutiveFailures int64
-	RateLimitedUntil    *time.Time
+	RateLimitedUntil    *sqltime.UTC
 	SupportsSearch      *bool
 }

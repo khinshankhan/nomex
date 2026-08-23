@@ -7,6 +7,7 @@ import (
 
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
+	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
 // DefaultBatch is how many rows are written per transaction. Large enough that
@@ -74,7 +75,7 @@ func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64,
 
 	// Seeded rows are due immediately: the sweep finds work by looking for
 	// fresh_until in the past, so an unchecked row has to be already stale.
-	due := time.Now().Add(-time.Minute)
+	due := sqltime.At(time.Now().Add(-time.Minute))
 
 	total, err := spec.Count()
 	if err != nil {
@@ -138,7 +139,7 @@ func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64,
 // for one OR IGNORE skipped -- rather than counting the table before and after.
 // At 10k rows per batch that saved two queries per batch, which is 7,400 round
 // trips over the full 37M candidate space.
-func insertBatch(ctx context.Context, db *data.DB, domains []string, due time.Time, priority int64) (int64, error) {
+func insertBatch(ctx context.Context, db *data.DB, domains []string, due sqltime.UTC, priority int64) (int64, error) {
 	var inserted int64
 
 	err := db.Tx(ctx, func(q *sqlcgen.Queries) error {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
+	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
 func openDB(t *testing.T) *data.DB {
@@ -105,7 +106,7 @@ func TestSeedPreservesExistingRows(t *testing.T) {
 	if err := db.UpsertCheck(ctx, sqlcgen.UpsertCheckParams{
 		Domain:     "ab.dev",
 		Status:     "not_found",
-		FreshUntil: fresh,
+		FreshUntil: sqltime.At(fresh),
 		Priority:   100,
 	}); err != nil {
 		t.Fatalf("UpsertCheck: %v", err)

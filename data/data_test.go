@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/khinshankhan/nomex/data/sqlcgen"
+	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
 // The pragmas are the reason this package exists rather than callers holding a
@@ -88,7 +89,7 @@ func insert(ctx context.Context, q *sqlcgen.Queries, domain string) error {
 	return q.UpsertCheck(ctx, sqlcgen.UpsertCheckParams{
 		Domain:     domain,
 		Status:     "unchecked",
-		FreshUntil: time.Now().Add(-time.Hour),
+		FreshUntil: sqltime.At(time.Now().Add(-time.Hour)),
 	})
 }
 
@@ -103,7 +104,7 @@ func TestTimestampsAreSQLiteReadable(t *testing.T) {
 	future := time.Now().Add(time.Hour).UTC()
 	if _, err := db.SeedCheck(ctx, sqlcgen.SeedCheckParams{
 		Domain:     "fmt.dev",
-		FreshUntil: future,
+		FreshUntil: sqltime.At(future),
 	}); err != nil {
 		t.Fatalf("SeedCheck: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
+	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
 // seed puts a row in checks so foreign keys from attempts/blocked resolve.
@@ -15,7 +16,7 @@ func seed(t *testing.T, db *DB, domain string) {
 	t.Helper()
 	if _, err := db.SeedCheck(t.Context(), sqlcgen.SeedCheckParams{
 		Domain:     domain,
-		FreshUntil: time.Now().Add(-time.Hour),
+		FreshUntil: sqltime.At(time.Now().Add(-time.Hour)),
 	}); err != nil {
 		t.Fatalf("seed %s: %v", domain, err)
 	}
@@ -92,7 +93,7 @@ func TestStoreFailureNeverBecomesAnAnswer(t *testing.T) {
 	if after.CheckedAt != nil {
 		t.Error("checked_at was set by a failure")
 	}
-	if !after.FreshUntil.After(before.FreshUntil) {
+	if !after.FreshUntil.After(before.FreshUntil.Time) {
 		t.Error("fresh_until was not deferred, so the sweep would spin on this row")
 	}
 

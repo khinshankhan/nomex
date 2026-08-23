@@ -6,7 +6,6 @@ package sqlcgen
 
 import (
 	"context"
-	"time"
 )
 
 type Querier interface {
@@ -21,6 +20,10 @@ type Querier interface {
 	// Push a row past a failure so the sweep stops returning it. This is what
 	// stands in for consulting attempts.retry_after in the scheduler query.
 	DeferCheck(ctx context.Context, arg DeferCheckParams) error
+	// Every comparison of a stored timestamp wraps the column in datetime().
+	// SQLite compares DATETIME text lexicographically and does not interpret the
+	// "-04:00" a non-UTC time carries, so a raw comparison reads a timestamp an
+	// hour in the future as hours stale. datetime() parses the offset.
 	// Work is a staleness query: fresh_until in the past means "check this".
 	//
 	// blocked is excluded here rather than by deleting the row, so a domain that
@@ -36,7 +39,7 @@ type Querier interface {
 	FilterChecks(ctx context.Context, arg FilterChecksParams) ([]string, error)
 	GetCheck(ctx context.Context, domain string) (Check, error)
 	IsBlocked(ctx context.Context, domain string) (bool, error)
-	PruneAttempts(ctx context.Context, attemptedAt time.Time) (int64, error)
+	PruneAttempts(ctx context.Context, before string) (int64, error)
 	RecentAttempts(ctx context.Context, arg RecentAttemptsParams) ([]Attempt, error)
 	RecordAttempt(ctx context.Context, arg RecordAttemptParams) error
 	// OR IGNORE so re-running a narrower seed over a wider one is a no-op per row

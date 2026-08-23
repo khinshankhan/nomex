@@ -7,6 +7,7 @@ import (
 
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
+	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
 // Store persists one check result.
@@ -31,10 +32,10 @@ func (db *DB) StoreResult(ctx context.Context, res check.Result, failures int) e
 		Domain:       res.Domain,
 		Status:       string(res.Status),
 		Source:       nullable(source),
-		CheckedAt:    &now,
-		FreshUntil:   check.FreshUntil(now, res.Status, res.Expiration),
-		Expiration:   res.Expiration,
-		RegisteredAt: res.Registered,
+		CheckedAt:    &sqltime.UTC{Time: now},
+		FreshUntil:   sqltime.At(check.FreshUntil(now, res.Status, res.Expiration)),
+		Expiration:   sqltime.Ptr(res.Expiration),
+		RegisteredAt: sqltime.Ptr(res.Registered),
 		Server:       nullable(res.Server),
 		Stale:        res.Stale,
 	})
@@ -43,15 +44,15 @@ func (db *DB) StoreResult(ctx context.Context, res check.Result, failures int) e
 // storeFailure records an attempt, blocks the domain when the error describes
 // it, and pushes fresh_until forward so the sweep stops returning the row.
 func (db *DB) storeFailure(ctx context.Context, res check.Result, now time.Time, failures int) error {
-	var retryAfter *time.Time
+	var retryAfter *sqltime.UTC
 	if res.RetryAfter > 0 {
-		t := now.Add(res.RetryAfter)
+		t := sqltime.At(now.Add(res.RetryAfter))
 		retryAfter = &t
 	}
 
 	err := db.RecordAttempt(ctx, sqlcgen.RecordAttemptParams{
 		Domain:      res.Domain,
-		AttemptedAt: now,
+		AttemptedAt: sqltime.At(now),
 		ErrorKind:   res.ErrKind,
 		Retryable:   res.Retryable,
 		RetryAfter:  retryAfter,
@@ -66,7 +67,7 @@ func (db *DB) storeFailure(ctx context.Context, res check.Result, now time.Time,
 		if err := db.BlockDomain(ctx, sqlcgen.BlockDomainParams{
 			Domain:    res.Domain,
 			Reason:    res.BlockReason,
-			BlockedAt: now,
+			BlockedAt: sqltime.At(now),
 		}); err != nil {
 			return fmt.Errorf("block %s: %w", res.Domain, err)
 		}
@@ -76,7 +77,7 @@ func (db *DB) storeFailure(ctx context.Context, res check.Result, now time.Time,
 	// row left due would still be re-read on every pass until that lands.
 	if err := db.DeferCheck(ctx, sqlcgen.DeferCheckParams{
 		Domain:     res.Domain,
-		FreshUntil: check.Backoff(now, failures, res.RetryAfter),
+		FreshUntil: sqltime.At(check.Backoff(now, failures, res.RetryAfter)),
 	}); err != nil {
 		return fmt.Errorf("defer %s: %w", res.Domain, err)
 	}

@@ -1,3 +1,8 @@
+-- Every comparison of a stored timestamp wraps the column in datetime().
+-- SQLite compares DATETIME text lexicographically and does not interpret the
+-- "-04:00" a non-UTC time carries, so a raw comparison reads a timestamp an
+-- hour in the future as hours stale. datetime() parses the offset.
+
 -- name: DueChecks :many
 -- Work is a staleness query: fresh_until in the past means "check this".
 --
@@ -11,7 +16,7 @@
 -- unfiltered query, because it cannot use the ordering index. The writer pushes
 -- fresh_until past the retry instant instead, which costs nothing extra.
 SELECT domain FROM checks c
-WHERE c.fresh_until < datetime('now')
+WHERE datetime(c.fresh_until) < datetime('now')
   AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
 ORDER BY c.priority DESC, c.queued_at ASC
 LIMIT ?;
@@ -68,7 +73,7 @@ ON CONFLICT(domain) DO UPDATE SET reason = excluded.reason, blocked_at = exclude
 UPDATE checks SET fresh_until = ? WHERE domain = ?;
 
 -- name: PruneAttempts :execrows
-DELETE FROM attempts WHERE attempted_at < ?;
+DELETE FROM attempts WHERE datetime(attempted_at) < datetime(CAST(sqlc.arg(before) AS TEXT));
 
 -- name: RecentAttempts :many
 SELECT * FROM attempts WHERE domain = ? ORDER BY attempted_at DESC LIMIT ?;
@@ -91,7 +96,8 @@ ON CONFLICT(domain) DO UPDATE SET
 -- name: CountRecentFailures :one
 -- Drives the backoff exponent. Bounded by time rather than counting the whole
 -- history, so a domain that failed last year starts fresh.
-SELECT COUNT(*) FROM attempts WHERE domain = ? AND attempted_at > ?;
+SELECT COUNT(*) FROM attempts
+WHERE domain = ? AND datetime(attempted_at) > datetime(CAST(sqlc.arg(since) AS TEXT));
 
 -- name: IsBlocked :one
 SELECT EXISTS (SELECT 1 FROM blocked WHERE domain = ?);

@@ -37,7 +37,7 @@ CREATE TABLE checks (
 );
 
 -- Scheduler read:
---   SELECT domain FROM checks WHERE fresh_until < datetime('now')
+--   SELECT domain FROM checks WHERE datetime(fresh_until) < datetime('now')
 --   ORDER BY priority DESC, queued_at ASC LIMIT ?;
 --
 -- Ordering first, deliberately. Leading with fresh_until gives an indexed range

@@ -7,7 +7,8 @@ package sqlcgen
 
 import (
 	"context"
-	"time"
+
+	sqltime "github.com/khinshankhan/nomex/data/sqltime"
 )
 
 const blockDomain = `-- name: BlockDomain :exec
@@ -19,7 +20,7 @@ ON CONFLICT(domain) DO UPDATE SET reason = excluded.reason, blocked_at = exclude
 type BlockDomainParams struct {
 	Domain    string
 	Reason    string
-	BlockedAt time.Time
+	BlockedAt sqltime.UTC
 }
 
 // Only for the three kinds that describe the domain: ErrNoServer,
@@ -83,18 +84,19 @@ func (q *Queries) CountChecks(ctx context.Context) (int64, error) {
 }
 
 const countRecentFailures = `-- name: CountRecentFailures :one
-SELECT COUNT(*) FROM attempts WHERE domain = ? AND attempted_at > ?
+SELECT COUNT(*) FROM attempts
+WHERE domain = ? AND datetime(attempted_at) > datetime(CAST(?2 AS TEXT))
 `
 
 type CountRecentFailuresParams struct {
-	Domain      string
-	AttemptedAt time.Time
+	Domain string
+	Since  string
 }
 
 // Drives the backoff exponent. Bounded by time rather than counting the whole
 // history, so a domain that failed last year starts fresh.
 func (q *Queries) CountRecentFailures(ctx context.Context, arg CountRecentFailuresParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countRecentFailures, arg.Domain, arg.AttemptedAt)
+	row := q.db.QueryRowContext(ctx, countRecentFailures, arg.Domain, arg.Since)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -105,7 +107,7 @@ UPDATE checks SET fresh_until = ? WHERE domain = ?
 `
 
 type DeferCheckParams struct {
-	FreshUntil time.Time
+	FreshUntil sqltime.UTC
 	Domain     string
 }
 
@@ -117,13 +119,18 @@ func (q *Queries) DeferCheck(ctx context.Context, arg DeferCheckParams) error {
 }
 
 const dueChecks = `-- name: DueChecks :many
+
 SELECT domain FROM checks c
-WHERE c.fresh_until < datetime('now')
+WHERE datetime(c.fresh_until) < datetime('now')
   AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
 ORDER BY c.priority DESC, c.queued_at ASC
 LIMIT ?
 `
 
+// Every comparison of a stored timestamp wraps the column in datetime().
+// SQLite compares DATETIME text lexicographically and does not interpret the
+// "-04:00" a non-UTC time carries, so a raw comparison reads a timestamp an
+// hour in the future as hours stale. datetime() parses the offset.
 // Work is a staleness query: fresh_until in the past means "check this".
 //
 // blocked is excluded here rather than by deleting the row, so a domain that
@@ -229,11 +236,11 @@ func (q *Queries) IsBlocked(ctx context.Context, domain string) (bool, error) {
 }
 
 const pruneAttempts = `-- name: PruneAttempts :execrows
-DELETE FROM attempts WHERE attempted_at < ?
+DELETE FROM attempts WHERE datetime(attempted_at) < datetime(CAST(?1 AS TEXT))
 `
 
-func (q *Queries) PruneAttempts(ctx context.Context, attemptedAt time.Time) (int64, error) {
-	result, err := q.db.ExecContext(ctx, pruneAttempts, attemptedAt)
+func (q *Queries) PruneAttempts(ctx context.Context, before string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pruneAttempts, before)
 	if err != nil {
 		return 0, err
 	}
@@ -285,10 +292,10 @@ VALUES (?, ?, ?, ?, ?)
 
 type RecordAttemptParams struct {
 	Domain      string
-	AttemptedAt time.Time
+	AttemptedAt sqltime.UTC
 	ErrorKind   string
 	Retryable   bool
-	RetryAfter  *time.Time
+	RetryAfter  *sqltime.UTC
 }
 
 func (q *Queries) RecordAttempt(ctx context.Context, arg RecordAttemptParams) error {
@@ -309,7 +316,7 @@ VALUES (?, 'unchecked', ?, ?)
 
 type SeedCheckParams struct {
 	Domain     string
-	FreshUntil time.Time
+	FreshUntil sqltime.UTC
 	Priority   int64
 }
 
@@ -339,7 +346,7 @@ ON CONFLICT(domain) DO UPDATE SET
 type UpsertCheckParams struct {
 	Domain     string
 	Status     string
-	FreshUntil time.Time
+	FreshUntil sqltime.UTC
 	Priority   int64
 }
 
@@ -373,10 +380,10 @@ type UpsertCheckResultParams struct {
 	Domain       string
 	Status       string
 	Source       *string
-	CheckedAt    *time.Time
-	FreshUntil   time.Time
-	Expiration   *time.Time
-	RegisteredAt *time.Time
+	CheckedAt    *sqltime.UTC
+	FreshUntil   sqltime.UTC
+	Expiration   *sqltime.UTC
+	RegisteredAt *sqltime.UTC
 	Server       *string
 	Stale        bool
 }
