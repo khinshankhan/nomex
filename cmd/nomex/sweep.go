@@ -62,16 +62,33 @@ flags:
 		return err
 	}
 
+	// Resolving the server before dispatch is what lets a throttled registry
+	// be skipped. One fetch of the IANA registry at startup; lookups after
+	// that are a map read.
+	origins, err := rdapchecker.NewOriginResolver()
+	if err != nil {
+		return err
+	}
+
 	fmt.Fprintf(os.Stderr, "sweeping at %g/s with %d workers\n", *rate, *workers)
 
-	var registered, available, failed int64
+	var registered, available, failed, skipped int64
 	done, err := sweep.Run(ctx, db, checker, sweep.Options{
 		Rate:    *rate,
 		Workers: *workers,
 		Batch:   *batch,
 		Limit:   *limit,
 		Once:    *once,
+		Origins: origins,
 		Progress: func(s sweep.Stat) {
+			if s.Skipped {
+				skipped++
+				if !*quiet {
+					fmt.Fprintf(os.Stderr, "  %-24s %-12s %s throttled\n", s.Domain, "skipped", s.Origin)
+				}
+				return
+			}
+
 			switch {
 			case s.Err != nil:
 				failed++
@@ -99,6 +116,9 @@ flags:
 
 	fmt.Fprintf(os.Stderr, "\n%d checked: %d registered, %d available, %d failed\n",
 		done, registered, available, failed)
+	if skipped > 0 {
+		fmt.Fprintf(os.Stderr, "%d skipped: their registry asked us to wait\n", skipped)
+	}
 	if done > 0 {
 		fmt.Fprintf(os.Stderr, "available: %.1f%%\n", float64(available)/float64(done)*100)
 	}

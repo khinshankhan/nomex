@@ -57,15 +57,30 @@ type Options struct {
 
 	// Progress, if set, is called after each result is stored.
 	Progress func(Stat)
+
+	// Origins, if set, maps a domain to the RDAP server that would serve it,
+	// so a throttled registry can be skipped before a query is spent on it.
+	// Without it the sweep still runs, it just cannot avoid known-bad servers.
+	Origins OriginResolver
+}
+
+// OriginResolver reports which server serves a domain, without querying it.
+type OriginResolver interface {
+	Origin(ctx context.Context, domain string) (string, error)
 }
 
 // Stat reports one completed check.
 type Stat struct {
 	Domain  string
+	Origin  string
 	Status  check.Status
 	Err     error
 	Done    int64
 	Elapsed time.Duration
+
+	// Skipped reports that the domain's registry is throttled, so no query
+	// was sent. Skipped work is not counted against Limit.
+	Skipped bool
 }
 
 // Run sweeps until the context is cancelled, the limit is reached, or -- with
@@ -113,7 +128,14 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 			continue
 		}
 
-		n, err := round(ctx, db, checker, domains, limiter.C, workers, opts, &done, start)
+		// Once per round: a handful of rows, and a stale answer costs at most
+		// one wasted query.
+		throttled, err := db.Throttled(ctx)
+		if err != nil {
+			return done, err
+		}
+
+		n, err := round(ctx, db, checker, domains, limiter.C, workers, opts, &done, start, throttled)
 		done = n
 		if err != nil {
 			return done, err
@@ -139,6 +161,7 @@ func round(
 	opts Options,
 	done *int64,
 	start time.Time,
+	throttled map[string]time.Time,
 ) (int64, error) {
 	work := make(chan string)
 
@@ -154,6 +177,24 @@ func round(
 		go func() {
 			defer wg.Done()
 			for domain := range work {
+				// Resolve the server first: a throttled registry is skipped
+				// without spending a rate-limiter tick or a query on it.
+				origin := ""
+				if opts.Origins != nil {
+					if o, err := opts.Origins.Origin(ctx, domain); err == nil {
+						origin = o
+					}
+				}
+				mu.Lock()
+				until, blocked := throttled[origin]
+				mu.Unlock()
+				if blocked && origin != "" && time.Now().Before(until) {
+					if opts.Progress != nil {
+						opts.Progress(Stat{Domain: domain, Origin: origin, Skipped: true})
+					}
+					continue
+				}
+
 				// Every query waits for the shared limiter, so adding workers
 				// hides latency without raising the rate.
 				select {
@@ -171,6 +212,22 @@ func round(
 
 				err := db.StoreResult(ctx, res, failures)
 
+				// Per-origin state, so a 429 aimed at one domain protects
+				// every other domain on that server.
+				nextTry, serr := db.RecordServer(ctx, res)
+				if serr != nil && err == nil {
+					err = serr
+				}
+				if !nextTry.IsZero() && res.Origin != "" {
+					// Honour it for the rest of this round too. Waiting for
+					// the next reload would let the whole batch through.
+					mu.Lock()
+					if cur, ok := throttled[res.Origin]; !ok || nextTry.After(cur) {
+						throttled[res.Origin] = nextTry
+					}
+					mu.Unlock()
+				}
+
 				mu.Lock()
 				if err != nil && firstErr == nil {
 					// A write failure is ours, not the registry's: stop rather
@@ -184,6 +241,7 @@ func round(
 				if opts.Progress != nil {
 					opts.Progress(Stat{
 						Domain:  domain,
+						Origin:  res.Origin,
 						Status:  res.Status,
 						Err:     res.Err,
 						Done:    count,

@@ -383,6 +383,51 @@ func (q *Queries) RecordAttempt(ctx context.Context, arg RecordAttemptParams) er
 	return err
 }
 
+const recordServerFailure = `-- name: RecordServerFailure :exec
+INSERT INTO servers (origin, last_failure, consecutive_failures, rate_limited_until)
+VALUES (?, ?, 1, ?)
+ON CONFLICT(origin) DO UPDATE SET
+  last_failure         = excluded.last_failure,
+  consecutive_failures = servers.consecutive_failures + 1,
+  rate_limited_until   = MAX(
+    COALESCE(servers.rate_limited_until, ''),
+    COALESCE(excluded.rate_limited_until, '')
+  )
+`
+
+type RecordServerFailureParams struct {
+	Origin           string
+	LastFailure      *sqltime.UTC
+	RateLimitedUntil *sqltime.UTC
+}
+
+// rate_limited_until is only extended, never shortened: a later failure with no
+// Retry-After must not cancel a longer wait the server explicitly asked for.
+func (q *Queries) RecordServerFailure(ctx context.Context, arg RecordServerFailureParams) error {
+	_, err := q.db.ExecContext(ctx, recordServerFailure, arg.Origin, arg.LastFailure, arg.RateLimitedUntil)
+	return err
+}
+
+const recordServerSuccess = `-- name: RecordServerSuccess :exec
+INSERT INTO servers (origin, last_success, consecutive_failures)
+VALUES (?, ?, 0)
+ON CONFLICT(origin) DO UPDATE SET
+  last_success         = excluded.last_success,
+  -- A success clears the streak and any throttle: the server is answering.
+  consecutive_failures = 0,
+  rate_limited_until   = NULL
+`
+
+type RecordServerSuccessParams struct {
+	Origin      string
+	LastSuccess *sqltime.UTC
+}
+
+func (q *Queries) RecordServerSuccess(ctx context.Context, arg RecordServerSuccessParams) error {
+	_, err := q.db.ExecContext(ctx, recordServerSuccess, arg.Origin, arg.LastSuccess)
+	return err
+}
+
 const seedCheck = `-- name: SeedCheck :execrows
 INSERT OR IGNORE INTO checks (domain, status, fresh_until, priority)
 VALUES (?, 'unchecked', ?, ?)
@@ -406,6 +451,60 @@ func (q *Queries) SeedCheck(ctx context.Context, arg SeedCheckParams) (int64, er
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const serverState = `-- name: ServerState :one
+SELECT origin, last_success, last_failure, consecutive_failures, rate_limited_until, supports_search FROM servers WHERE origin = ?
+`
+
+func (q *Queries) ServerState(ctx context.Context, origin string) (Server, error) {
+	row := q.db.QueryRowContext(ctx, serverState, origin)
+	var i Server
+	err := row.Scan(
+		&i.Origin,
+		&i.LastSuccess,
+		&i.LastFailure,
+		&i.ConsecutiveFailures,
+		&i.RateLimitedUntil,
+		&i.SupportsSearch,
+	)
+	return i, err
+}
+
+const throttledServers = `-- name: ThrottledServers :many
+SELECT origin, rate_limited_until FROM servers
+WHERE rate_limited_until IS NOT NULL
+  AND datetime(rate_limited_until) > datetime('now')
+`
+
+type ThrottledServersRow struct {
+	Origin           string
+	RateLimitedUntil *sqltime.UTC
+}
+
+// Origins that asked us to wait, so the sweeper can skip their domains rather
+// than spending its rate budget on guaranteed failures.
+func (q *Queries) ThrottledServers(ctx context.Context) ([]ThrottledServersRow, error) {
+	rows, err := q.db.QueryContext(ctx, throttledServers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ThrottledServersRow{}
+	for rows.Next() {
+		var i ThrottledServersRow
+		if err := rows.Scan(&i.Origin, &i.RateLimitedUntil); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertCheck = `-- name: UpsertCheck :exec

@@ -52,6 +52,10 @@ type Querier interface {
 	PruneAttempts(ctx context.Context, before string) (int64, error)
 	RecentAttempts(ctx context.Context, arg RecentAttemptsParams) ([]Attempt, error)
 	RecordAttempt(ctx context.Context, arg RecordAttemptParams) error
+	// rate_limited_until is only extended, never shortened: a later failure with no
+	// Retry-After must not cancel a longer wait the server explicitly asked for.
+	RecordServerFailure(ctx context.Context, arg RecordServerFailureParams) error
+	RecordServerSuccess(ctx context.Context, arg RecordServerSuccessParams) error
 	// OR IGNORE so re-running a narrower seed over a wider one is a no-op per row
 	// rather than resetting status or priority on already-checked domains.
 	//
@@ -59,6 +63,10 @@ type Querier interface {
 	// for one that was ignored, which is how the seeder reports what it added
 	// without counting the table before and after every batch.
 	SeedCheck(ctx context.Context, arg SeedCheckParams) (int64, error)
+	ServerState(ctx context.Context, origin string) (Server, error)
+	// Origins that asked us to wait, so the sweeper can skip their domains rather
+	// than spending its rate budget on guaranteed failures.
+	ThrottledServers(ctx context.Context) ([]ThrottledServersRow, error)
 	// Generated columns are omitted deliberately: naming one is an error.
 	UpsertCheck(ctx context.Context, arg UpsertCheckParams) error
 	// The full result path. Generated columns are omitted: naming one is an error.

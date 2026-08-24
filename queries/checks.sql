@@ -121,3 +121,35 @@ WHERE (CAST(sqlc.arg(status) AS TEXT)      = '' OR status    = sqlc.arg(status))
   AND (CAST(sqlc.arg(fresh_only) AS INTEGER) = 0 OR datetime(fresh_until) >= datetime('now'))
 ORDER BY label_len, domain
 LIMIT sqlc.arg(lim);
+
+-- name: ServerState :one
+SELECT * FROM servers WHERE origin = ?;
+
+-- name: RecordServerSuccess :exec
+INSERT INTO servers (origin, last_success, consecutive_failures)
+VALUES (?, ?, 0)
+ON CONFLICT(origin) DO UPDATE SET
+  last_success         = excluded.last_success,
+  -- A success clears the streak and any throttle: the server is answering.
+  consecutive_failures = 0,
+  rate_limited_until   = NULL;
+
+-- name: RecordServerFailure :exec
+-- rate_limited_until is only extended, never shortened: a later failure with no
+-- Retry-After must not cancel a longer wait the server explicitly asked for.
+INSERT INTO servers (origin, last_failure, consecutive_failures, rate_limited_until)
+VALUES (?, ?, 1, ?)
+ON CONFLICT(origin) DO UPDATE SET
+  last_failure         = excluded.last_failure,
+  consecutive_failures = servers.consecutive_failures + 1,
+  rate_limited_until   = MAX(
+    COALESCE(servers.rate_limited_until, ''),
+    COALESCE(excluded.rate_limited_until, '')
+  );
+
+-- name: ThrottledServers :many
+-- Origins that asked us to wait, so the sweeper can skip their domains rather
+-- than spending its rate budget on guaranteed failures.
+SELECT origin, rate_limited_until FROM servers
+WHERE rate_limited_until IS NOT NULL
+  AND datetime(rate_limited_until) > datetime('now');
