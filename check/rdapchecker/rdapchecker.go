@@ -13,6 +13,7 @@ import (
 
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/rdap"
+	"github.com/khinshankhan/rdap/bootstrap"
 )
 
 // blockable is the allowlist of error kinds that describe the DOMAIN rather
@@ -38,7 +39,22 @@ type Checker struct {
 // requires: registries rate-limit or block anonymous clients, and an operator
 // who wants to complain should be able to find us.
 func New(userAgent string, opts ...rdap.ClientOption) (*Checker, error) {
-	client, err := rdap.New(append([]rdap.ClientOption{rdap.WithUserAgent(userAgent)}, opts...)...)
+	// A disk-cached resolver, so repeated invocations do not refetch the IANA
+	// registry. Without it every process start costs a round trip to IANA.
+	cache, err := bootstrap.NewDiskCache("")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap cache: %w", err)
+	}
+	resolver, err := bootstrap.NewResolver(bootstrap.WithCache(cache))
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap resolver: %w", err)
+	}
+
+	defaults := []rdap.ClientOption{
+		rdap.WithUserAgent(userAgent),
+		rdap.WithResolver(resolver),
+	}
+	client, err := rdap.New(append(defaults, opts...)...)
 	if err != nil {
 		return nil, fmt.Errorf("rdap client: %w", err)
 	}
