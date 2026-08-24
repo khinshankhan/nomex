@@ -235,6 +235,80 @@ func (q *Queries) IsBlocked(ctx context.Context, domain string) (bool, error) {
 	return exists, err
 }
 
+const listChecks = `-- name: ListChecks :many
+SELECT domain, status, checked_at, fresh_until, expiration,
+       datetime(fresh_until) < datetime('now') AS stale
+FROM checks
+WHERE (CAST(?1 AS TEXT)      = '' OR status    = ?1)
+  AND (CAST(?2 AS TEXT)      = '' OR suffix    = ?2)
+  AND (CAST(?3 AS INTEGER) = 0 OR label_len = ?3)
+  AND (CAST(?4 AS INTEGER) = 0 OR datetime(fresh_until) >= datetime('now'))
+ORDER BY label_len, domain
+LIMIT ?5
+`
+
+type ListChecksParams struct {
+	Status    string
+	Suffix    string
+	LabelLen  int64
+	FreshOnly int64
+	Lim       int64
+}
+
+type ListChecksRow struct {
+	Domain     string
+	Status     string
+	CheckedAt  *sqltime.UTC
+	FreshUntil sqltime.UTC
+	Expiration *sqltime.UTC
+	Stale      bool
+}
+
+// The report query. Every filter is optional: passing the zero value for one
+// disables it, so "everything available" and "four-letter .dev that is not
+// taken" are the same query.
+//
+// Deliberately not using idx_checks_filter -- a leading OR defeats it. This is
+// a human-triggered report over a table the sweep touches constantly, so a scan
+// is the right trade against maintaining several near-identical queries.
+// CAST so sqlc can infer a type: through a bare OR comparison it gives up and
+// generates interface{}.
+func (q *Queries) ListChecks(ctx context.Context, arg ListChecksParams) ([]ListChecksRow, error) {
+	rows, err := q.db.QueryContext(ctx, listChecks,
+		arg.Status,
+		arg.Suffix,
+		arg.LabelLen,
+		arg.FreshOnly,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListChecksRow{}
+	for rows.Next() {
+		var i ListChecksRow
+		if err := rows.Scan(
+			&i.Domain,
+			&i.Status,
+			&i.CheckedAt,
+			&i.FreshUntil,
+			&i.Expiration,
+			&i.Stale,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneAttempts = `-- name: PruneAttempts :execrows
 DELETE FROM attempts WHERE datetime(attempted_at) < datetime(CAST(?1 AS TEXT))
 `

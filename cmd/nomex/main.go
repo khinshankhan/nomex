@@ -44,6 +44,8 @@ func run(ctx context.Context, args []string) error {
 		return runGather(ctx, args[1:])
 	case "sweep":
 		return runSweep(ctx, args[1:])
+	case "list":
+		return runList(ctx, args[1:])
 	case "version":
 		fmt.Fprint(
 			os.Stderr,
@@ -76,6 +78,7 @@ usage:
   nomex serve           run the HTTP API
   nomex gather          seed candidate domains
   nomex sweep           check domains whose answers have gone stale
+  nomex list            report what the database knows
   nomex help            this message
   nomex version         display build info
 

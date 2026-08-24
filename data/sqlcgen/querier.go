@@ -39,6 +39,16 @@ type Querier interface {
 	FilterChecks(ctx context.Context, arg FilterChecksParams) ([]string, error)
 	GetCheck(ctx context.Context, domain string) (Check, error)
 	IsBlocked(ctx context.Context, domain string) (bool, error)
+	// The report query. Every filter is optional: passing the zero value for one
+	// disables it, so "everything available" and "four-letter .dev that is not
+	// taken" are the same query.
+	//
+	// Deliberately not using idx_checks_filter -- a leading OR defeats it. This is
+	// a human-triggered report over a table the sweep touches constantly, so a scan
+	// is the right trade against maintaining several near-identical queries.
+	// CAST so sqlc can infer a type: through a bare OR comparison it gives up and
+	// generates interface{}.
+	ListChecks(ctx context.Context, arg ListChecksParams) ([]ListChecksRow, error)
 	PruneAttempts(ctx context.Context, before string) (int64, error)
 	RecentAttempts(ctx context.Context, arg RecentAttemptsParams) ([]Attempt, error)
 	RecordAttempt(ctx context.Context, arg RecordAttemptParams) error

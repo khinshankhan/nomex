@@ -101,3 +101,23 @@ WHERE domain = ? AND datetime(attempted_at) > datetime(CAST(sqlc.arg(since) AS T
 
 -- name: IsBlocked :one
 SELECT EXISTS (SELECT 1 FROM blocked WHERE domain = ?);
+
+-- name: ListChecks :many
+-- The report query. Every filter is optional: passing the zero value for one
+-- disables it, so "everything available" and "four-letter .dev that is not
+-- taken" are the same query.
+--
+-- Deliberately not using idx_checks_filter -- a leading OR defeats it. This is
+-- a human-triggered report over a table the sweep touches constantly, so a scan
+-- is the right trade against maintaining several near-identical queries.
+SELECT domain, status, checked_at, fresh_until, expiration,
+       datetime(fresh_until) < datetime('now') AS stale
+FROM checks
+-- CAST so sqlc can infer a type: through a bare OR comparison it gives up and
+-- generates interface{}.
+WHERE (CAST(sqlc.arg(status) AS TEXT)      = '' OR status    = sqlc.arg(status))
+  AND (CAST(sqlc.arg(suffix) AS TEXT)      = '' OR suffix    = sqlc.arg(suffix))
+  AND (CAST(sqlc.arg(label_len) AS INTEGER) = 0 OR label_len = sqlc.arg(label_len))
+  AND (CAST(sqlc.arg(fresh_only) AS INTEGER) = 0 OR datetime(fresh_until) >= datetime('now'))
+ORDER BY label_len, domain
+LIMIT sqlc.arg(lim);
