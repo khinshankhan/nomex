@@ -11,14 +11,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/khinshankhan/logstox/fields"
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
+	"github.com/khinshankhan/nomex/platform/logx"
 )
 
 // Defaults chosen to be polite rather than fast. Google's .dev registry
@@ -134,11 +135,15 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 	// Prune once at startup, then hourly. Doing it here rather than in a
 	// separate command means retention happens for anyone who runs the sweep,
 	// instead of being a chore nobody remembers.
+	log := logx.Default().Named("sweep")
+
 	lastPrune := time.Now()
 	if n, err := db.PruneAttempts(ctx, pruneCutoff()); err != nil {
-		log.Printf("[sweep] pruning attempts: %v", err)
+		log.Warn("pruning attempts", fields.Error(err))
 	} else if n > 0 {
-		log.Printf("[sweep] pruned %d attempts older than %s", n, AttemptRetention)
+		log.Info("pruned old attempts",
+			fields.Int64("n", n),
+			fields.Duration("retention", AttemptRetention))
 	}
 
 	start := time.Now()
@@ -152,7 +157,7 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 		if time.Since(lastPrune) > pruneEvery {
 			lastPrune = time.Now()
 			if _, err := db.PruneAttempts(ctx, pruneCutoff()); err != nil {
-				log.Printf("[sweep] pruning attempts: %v", err)
+				log.Warn("pruning attempts", fields.Error(err))
 			}
 		}
 
@@ -423,7 +428,9 @@ func recentFailures(ctx context.Context, db *data.DB, domain string) int {
 		Since: time.Now().Add(-failureWindow).UTC().Format(time.RFC3339Nano),
 	})
 	if err != nil {
-		log.Printf("[sweep] counting failures for %s: %v", domain, err)
+		logx.Default().Named("sweep").Warn("counting failures",
+			fields.String("domain", domain),
+			fields.Error(err))
 		return 0
 	}
 	return int(n)

@@ -1,9 +1,11 @@
 package middleware
 
 import (
-	"log"
 	"net/http"
 	"strings"
+
+	"github.com/khinshankhan/logstox/fields"
+	"github.com/khinshankhan/nomex/platform/logx"
 )
 
 // BlackHole replaces the mux's default 404 body under the given path prefixes.
@@ -47,8 +49,11 @@ func BlackHole(prefixes ...string) Middleware {
 			next.ServeHTTP(bw, r)
 
 			if bw.swallowed {
-				// %q: the path is caller-controlled and can contain newlines.
-				log.Printf("[BlackHole] no route for %s %q", r.Method, r.URL.Path)
+				// Structured: the path is caller-controlled and can contain
+				// newlines, which would forge lines in a formatted log.
+				logx.Default().Named("blackhole").Info("no route",
+					fields.String("method", r.Method),
+					fields.String("path", r.URL.Path))
 				http.Error(w, "ERROR 404: DATA NOT FOUND IN THIS SECTOR.", http.StatusNotFound)
 			}
 		})

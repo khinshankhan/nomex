@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 
+	"github.com/khinshankhan/logstox/fields"
 	"github.com/khinshankhan/nomex/controller/handler"
 	"github.com/khinshankhan/nomex/controller/middleware"
+	"github.com/khinshankhan/nomex/platform/logx"
 )
 
 const (
@@ -53,7 +54,7 @@ func newHTTPServer(addr string) *httpServer {
 func (s *httpServer) run(ctx context.Context) error {
 	listening := make(chan error, 1)
 	go func() {
-		log.Printf("listening on %s", s.srv.Addr)
+		logx.Default().Named("http").Info("listening", fields.String("addr", s.srv.Addr))
 		listening <- s.srv.ListenAndServe()
 	}()
 
@@ -67,7 +68,7 @@ func (s *httpServer) run(ctx context.Context) error {
 		return err
 
 	case <-ctx.Done():
-		log.Println("shutting down")
+		logx.Default().Named("http").Info("shutting down")
 
 		// Fresh context: ctx is already cancelled and would abort the drain.
 		shutCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)

@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/khinshankhan/logstox/fields"
 	"github.com/khinshankhan/nomex/controller"
 	"github.com/khinshankhan/nomex/platform"
+	"github.com/khinshankhan/nomex/platform/logx"
 	"golang.org/x/sync/errgroup"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,7 +24,8 @@ func main() {
 	defer stop()
 
 	if err := run(ctx, os.Args[1:]); err != nil {
-		log.Fatal(err)
+		logx.Default().Error("exiting", fields.Error(err))
+		os.Exit(1)
 	}
 }
 

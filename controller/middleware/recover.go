@@ -2,9 +2,11 @@ package middleware
 
 import (
 	"io"
-	"log"
 	"net/http"
 	"runtime/debug"
+
+	"github.com/khinshankhan/logstox/fields"
+	"github.com/khinshankhan/nomex/platform/logx"
 )
 
 // Recover turns a panic into a 500, unless the response has already started --
@@ -21,8 +23,11 @@ func Recover(next http.Handler) http.Handler {
 					panic(err)
 				}
 
-				log.Printf("[Recover] panic serving %s %q: %v\n%s",
-					r.Method, r.URL.Path, err, debug.Stack())
+				logx.Default().Named("recover").Error("panic serving request",
+					fields.String("method", r.Method),
+					fields.String("path", r.URL.Path),
+					fields.Any("panic", err),
+					fields.String("stack", string(debug.Stack())))
 
 				if !rw.wroteHeader {
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
