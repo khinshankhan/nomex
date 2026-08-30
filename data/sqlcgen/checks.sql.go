@@ -165,6 +165,87 @@ func (q *Queries) DueChecks(ctx context.Context, limit int64) ([]string, error) 
 	return items, nil
 }
 
+const dueChecksForSuffix = `-- name: DueChecksForSuffix :many
+SELECT domain FROM checks c
+WHERE c.suffix = ?
+  AND datetime(c.fresh_until) < datetime('now')
+  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
+ORDER BY c.priority DESC, c.queued_at ASC
+LIMIT ?
+`
+
+type DueChecksForSuffixParams struct {
+	Suffix string
+	Limit  int64
+}
+
+func (q *Queries) DueChecksForSuffix(ctx context.Context, arg DueChecksForSuffixParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, dueChecksForSuffix, arg.Suffix, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, err
+		}
+		items = append(items, domain)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueSuffixes = `-- name: DueSuffixes :many
+SELECT suffix, COUNT(*) AS due
+FROM checks c
+WHERE datetime(c.fresh_until) < datetime('now')
+  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
+GROUP BY suffix
+ORDER BY due DESC
+`
+
+type DueSuffixesRow struct {
+	Suffix string
+	Due    int64
+}
+
+// Which suffixes have work, most-starved first.
+//
+// The sweep claims per suffix rather than globally: one shared batch ordered by
+// queued_at interleaves suffixes, so workers holding a fast registry's domains
+// idle while the batch drains of a slow one's. Measured across three TLDs, that
+// paced every registry to the slowest -- .com ran at .dev's rate rather than
+// ten times it.
+func (q *Queries) DueSuffixes(ctx context.Context) ([]DueSuffixesRow, error) {
+	rows, err := q.db.QueryContext(ctx, dueSuffixes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueSuffixesRow{}
+	for rows.Next() {
+		var i DueSuffixesRow
+		if err := rows.Scan(&i.Suffix, &i.Due); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const filterChecks = `-- name: FilterChecks :many
 SELECT domain FROM checks
 WHERE suffix = ? AND label_len = ? AND status = ?

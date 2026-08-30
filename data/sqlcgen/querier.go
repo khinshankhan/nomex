@@ -36,6 +36,15 @@ type Querier interface {
 	// unfiltered query, because it cannot use the ordering index. The writer pushes
 	// fresh_until past the retry instant instead, which costs nothing extra.
 	DueChecks(ctx context.Context, limit int64) ([]string, error)
+	DueChecksForSuffix(ctx context.Context, arg DueChecksForSuffixParams) ([]string, error)
+	// Which suffixes have work, most-starved first.
+	//
+	// The sweep claims per suffix rather than globally: one shared batch ordered by
+	// queued_at interleaves suffixes, so workers holding a fast registry's domains
+	// idle while the batch drains of a slow one's. Measured across three TLDs, that
+	// paced every registry to the slowest -- .com ran at .dev's rate rather than
+	// ten times it.
+	DueSuffixes(ctx context.Context) ([]DueSuffixesRow, error)
 	FilterChecks(ctx context.Context, arg FilterChecksParams) ([]string, error)
 	GetCheck(ctx context.Context, domain string) (Check, error)
 	IsBlocked(ctx context.Context, domain string) (bool, error)

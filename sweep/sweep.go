@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/khinshankhan/nomex/check"
@@ -20,11 +21,10 @@ import (
 	"github.com/khinshankhan/nomex/data/sqlcgen"
 )
 
-// Defaults chosen to be polite rather than fast. The real safe rate per
-// registry is unmeasured -- November's 18,752 timeouts recorded the wall, not
-// the limit -- so these start conservative and are meant to be tuned.
+// Defaults chosen to be polite rather than fast. Google's .dev registry
+// returned 429 after 10 queries at 2/sec, so the per-registry budget in
+// DefaultLimits starts at one per second.
 const (
-	DefaultRate    = 3.0 // queries per second
 	DefaultWorkers = 4
 	DefaultBatch   = 100
 
@@ -39,8 +39,13 @@ const (
 
 // Options configures a sweep.
 type Options struct {
-	// Rate is queries per second across all workers. Zero means DefaultRate.
-	Rate float64
+	// Limits is the per-server rate budget. Each origin gets its own, so a
+	// slow registry does not hold up a fast one.
+	Limits Limits
+
+	// MaxAttempts bounds retries per domain within one sweep. Zero means
+	// DefaultMaxAttempts.
+	MaxAttempts int
 
 	// Workers is how many checks run concurrently. More workers do not exceed
 	// Rate; they hide latency, since a query spends most of its time waiting.
@@ -86,10 +91,6 @@ type Stat struct {
 // Run sweeps until the context is cancelled, the limit is reached, or -- with
 // Once -- one round completes.
 func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) (int64, error) {
-	rate := opts.Rate
-	if rate <= 0 {
-		rate = DefaultRate
-	}
 	workers := opts.Workers
 	if workers <= 0 {
 		workers = DefaultWorkers
@@ -99,11 +100,14 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 		batch = DefaultBatch
 	}
 
-	// One limiter shared by every worker, so the rate is a property of the
-	// process rather than of each goroutine.
-	tick := time.Duration(float64(time.Second) / rate)
-	limiter := time.NewTicker(tick)
-	defer limiter.Stop()
+	attempts := opts.MaxAttempts
+	if attempts <= 0 {
+		attempts = DefaultMaxAttempts
+	}
+
+	// One limiter per origin, created on first use. A single global rate would
+	// make every registry wait for the slowest.
+	lims := newLimiters(opts.Limits)
 
 	start := time.Now()
 	var done int64
@@ -113,12 +117,12 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 			return done, err
 		}
 
-		domains, err := db.DueChecks(ctx, int64(batch))
+		suffixes, err := db.DueSuffixes(ctx)
 		if err != nil {
 			return done, fmt.Errorf("claim work: %w", err)
 		}
 
-		if len(domains) == 0 {
+		if len(suffixes) == 0 {
 			if opts.Once {
 				return done, nil
 			}
@@ -135,7 +139,7 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 			return done, err
 		}
 
-		n, err := round(ctx, db, checker, domains, limiter.C, workers, opts, &done, start, throttled)
+		n, err := sweepRound(ctx, db, checker, suffixes, lims, attempts, workers, opts, done, start, throttled)
 		done = n
 		if err != nil {
 			return done, err
@@ -150,32 +154,126 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 	}
 }
 
+// sweepRound runs one pipeline per suffix, concurrently.
+//
+// Each suffix drains at its own registry's pace: the per-origin limiters do the
+// pacing, and a slow registry no longer holds up a fast one because they are
+// not sharing a batch.
+func sweepRound(
+	ctx context.Context,
+	db *data.DB,
+	checker check.Checker,
+	suffixes []sqlcgen.DueSuffixesRow,
+	lims *limiters,
+	attempts int,
+	workers int,
+	opts Options,
+	done int64,
+	start time.Time,
+	throttled map[string]time.Time,
+) (int64, error) {
+	// Atomic rather than a copied int: pipelines run concurrently, and each
+	// taking its own copy of the running total means they overwrite one
+	// another's progress instead of accumulating.
+	var total atomic.Int64
+	total.Store(done)
+
+	var (
+		mu       sync.Mutex
+		firstErr error
+	)
+
+	var wg sync.WaitGroup
+	for _, suf := range suffixes {
+		wg.Add(1)
+		go func(suffix string) {
+			defer wg.Done()
+
+			batch := opts.Batch
+			if batch <= 0 {
+				batch = DefaultBatch
+			}
+
+			// Each suffix keeps claiming until it runs dry. Rejoining at a
+			// round boundary would pace every registry to the slowest: a fast
+			// one finishes its batch in seconds and then waits.
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				if opts.Limit > 0 && total.Load() >= opts.Limit {
+					return
+				}
+
+				domains, err := db.DueChecksForSuffix(ctx, sqlcgen.DueChecksForSuffixParams{
+					Suffix: suffix,
+					Limit:  int64(batch),
+				})
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("claim %s: %w", suffix, err)
+					}
+					mu.Unlock()
+					return
+				}
+				if len(domains) == 0 {
+					return
+				}
+
+				if err := round(ctx, db, checker, domains, lims, attempts, workers, opts, &total, start, throttled, &mu); err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+					return
+				}
+
+				// Once means one batch per suffix, not one batch overall.
+				if opts.Once {
+					return
+				}
+			}
+		}(suf.Suffix)
+	}
+	wg.Wait()
+
+	if firstErr != nil {
+		return total.Load(), firstErr
+	}
+	return total.Load(), ctx.Err()
+}
+
 // round checks one batch of domains across a worker pool.
 func round(
 	ctx context.Context,
 	db *data.DB,
 	checker check.Checker,
 	domains []string,
-	tick <-chan time.Time,
+	lims *limiters,
+	attempts int,
 	workers int,
 	opts Options,
-	done *int64,
+	total *atomic.Int64,
 	start time.Time,
 	throttled map[string]time.Time,
-) (int64, error) {
+	mu *sync.Mutex,
+) error {
 	work := make(chan string)
 
-	var (
-		mu       sync.Mutex
-		total    = *done
-		firstErr error
-	)
+	var firstErr error
 
 	var wg sync.WaitGroup
-	for range workers {
+	for w := range workers {
 		wg.Add(1)
-		go func() {
+		go func(workerID int) {
 			defer wg.Done()
+
+			// Its own RNG, seeded apart: a shared one has every worker retry
+			// at the same instant, which arrives at the server as a stampede.
+			backoff := newBackoff(int64(workerID) * 10_000)
+
 			for domain := range work {
 				// Resolve the server first: a throttled registry is skipped
 				// without spending a rate-limiter tick or a query on it.
@@ -195,15 +293,7 @@ func round(
 					continue
 				}
 
-				// Every query waits for the shared limiter, so adding workers
-				// hides latency without raising the rate.
-				select {
-				case <-tick:
-				case <-ctx.Done():
-					return
-				}
-
-				res := checker.Check(ctx, domain)
+				res := checkWithRetry(ctx, checker, lims, backoff, domain, origin, attempts)
 
 				failures := 0
 				if res.Failed() {
@@ -228,15 +318,16 @@ func round(
 					mu.Unlock()
 				}
 
-				mu.Lock()
-				if err != nil && firstErr == nil {
-					// A write failure is ours, not the registry's: stop rather
-					// than sweeping on with results going nowhere.
-					firstErr = fmt.Errorf("store %s: %w", domain, err)
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						// A write failure is ours, not the registry's: stop
+						// rather than sweeping on with results going nowhere.
+						firstErr = fmt.Errorf("store %s: %w", domain, err)
+					}
+					mu.Unlock()
 				}
-				total++
-				count := total
-				mu.Unlock()
+				count := total.Add(1)
 
 				if opts.Progress != nil {
 					opts.Progress(Stat{
@@ -249,12 +340,12 @@ func round(
 					})
 				}
 			}
-		}()
+		}(w)
 	}
 
 feed:
 	for _, d := range domains {
-		if opts.Limit > 0 && total >= opts.Limit {
+		if opts.Limit > 0 && total.Load() >= opts.Limit {
 			break
 		}
 		select {
@@ -267,9 +358,9 @@ feed:
 	wg.Wait()
 
 	if firstErr != nil {
-		return total, firstErr
+		return firstErr
 	}
-	return total, ctx.Err()
+	return ctx.Err()
 }
 
 // recentFailures counts failures in the backoff window. A count of zero on

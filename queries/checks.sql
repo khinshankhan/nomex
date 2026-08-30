@@ -153,3 +153,26 @@ ON CONFLICT(origin) DO UPDATE SET
 SELECT origin, rate_limited_until FROM servers
 WHERE rate_limited_until IS NOT NULL
   AND datetime(rate_limited_until) > datetime('now');
+
+-- name: DueSuffixes :many
+-- Which suffixes have work, most-starved first.
+--
+-- The sweep claims per suffix rather than globally: one shared batch ordered by
+-- queued_at interleaves suffixes, so workers holding a fast registry's domains
+-- idle while the batch drains of a slow one's. Measured across three TLDs, that
+-- paced every registry to the slowest -- .com ran at .dev's rate rather than
+-- ten times it.
+SELECT suffix, COUNT(*) AS due
+FROM checks c
+WHERE datetime(c.fresh_until) < datetime('now')
+  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
+GROUP BY suffix
+ORDER BY due DESC;
+
+-- name: DueChecksForSuffix :many
+SELECT domain FROM checks c
+WHERE c.suffix = ?
+  AND datetime(c.fresh_until) < datetime('now')
+  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
+ORDER BY c.priority DESC, c.queued_at ASC
+LIMIT ?;

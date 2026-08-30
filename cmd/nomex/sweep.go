@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/nomex/check/rdapchecker"
@@ -20,7 +21,9 @@ const contactURL = "https://github.com/khinshankhan/nomex"
 func runSweep(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("sweep", flag.ContinueOnError)
 	dbPath := flags.String("db", defaultDBPath, "path to the database")
-	rate := flags.Float64("rate", sweep.DefaultRate, "queries per second across all workers")
+	rate := flags.Float64("rate", 1, "queries per second, per registry")
+	burst := flags.Int("burst", sweep.DefaultLimits.Burst, "queries allowed back-to-back per registry")
+	attempts := flags.Int("attempts", sweep.DefaultMaxAttempts, "retries per domain within one sweep")
 	workers := flags.Int("workers", sweep.DefaultWorkers, "concurrent checks")
 	batch := flags.Int("batch", sweep.DefaultBatch, "domains claimed per round")
 	limit := flags.Int64("limit", 0, "stop after this many checks (0 = until interrupted)")
@@ -70,16 +73,20 @@ flags:
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "sweeping at %g/s with %d workers\n", *rate, *workers)
+	fmt.Fprintf(os.Stderr, "sweeping at %g/s per registry (burst %d), %d workers\n", *rate, *burst, *workers)
 
 	var registered, available, failed, skipped int64
 	done, err := sweep.Run(ctx, db, checker, sweep.Options{
-		Rate:    *rate,
-		Workers: *workers,
-		Batch:   *batch,
-		Limit:   *limit,
-		Once:    *once,
-		Origins: origins,
+		Limits: sweep.Limits{
+			Every: time.Duration(float64(time.Second) / *rate),
+			Burst: *burst,
+		},
+		MaxAttempts: *attempts,
+		Workers:     *workers,
+		Batch:       *batch,
+		Limit:       *limit,
+		Once:        *once,
+		Origins:     origins,
 		Progress: func(s sweep.Stat) {
 			if s.Skipped {
 				skipped++
