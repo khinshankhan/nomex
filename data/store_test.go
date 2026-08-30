@@ -173,3 +173,51 @@ func TestStoreCancellationDoesNotBlock(t *testing.T) {
 		t.Error("a cancelled context blocked the domain")
 	}
 }
+
+// attempts grows by one row per transient failure forever, so retention has to
+// actually delete -- and has to leave recent failures alone, since those drive
+// the backoff exponent.
+func TestPruneAttemptsKeepsRecentFailures(t *testing.T) {
+	db := openTest(t)
+	ctx := t.Context()
+	seed(t, db, "x.dev")
+
+	now := time.Now().UTC()
+	for _, age := range []time.Duration{
+		90 * 24 * time.Hour, // old
+		31 * 24 * time.Hour, // old
+		29 * 24 * time.Hour, // keep
+		time.Hour,           // keep
+	} {
+		if err := db.RecordAttempt(ctx, sqlcgen.RecordAttemptParams{
+			Domain:      "x.dev",
+			AttemptedAt: sqltime.At(now.Add(-age)),
+			ErrorKind:   "timeout",
+			Retryable:   true,
+		}); err != nil {
+			t.Fatalf("RecordAttempt: %v", err)
+		}
+	}
+
+	cutoff := now.Add(-30 * 24 * time.Hour).Format(time.RFC3339Nano)
+	deleted, err := db.PruneAttempts(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("PruneAttempts: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted %d, want 2", deleted)
+	}
+
+	left, err := db.RecentAttempts(ctx, sqlcgen.RecentAttemptsParams{Domain: "x.dev", Limit: 10})
+	if err != nil {
+		t.Fatalf("RecentAttempts: %v", err)
+	}
+	if len(left) != 2 {
+		t.Errorf("%d attempts remain, want the 2 recent ones", len(left))
+	}
+	for _, a := range left {
+		if now.Sub(a.AttemptedAt.Time) > 30*24*time.Hour {
+			t.Errorf("kept an attempt from %v", a.AttemptedAt.Time)
+		}
+	}
+}

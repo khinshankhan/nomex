@@ -35,6 +35,17 @@ const (
 	// failureWindow bounds how far back consecutive failures are counted for
 	// backoff, so a domain that failed last year starts fresh.
 	failureWindow = 7 * 24 * time.Hour
+
+	// AttemptRetention is how long a failure is kept. Attempts grows by one
+	// row per transient failure forever, and a throttled registry produces
+	// them faster than results -- a live run recorded 6 from 16 checks. They
+	// are diagnostic, so anything older than the backoff window has already
+	// served its purpose.
+	AttemptRetention = 30 * 24 * time.Hour
+
+	// pruneEvery bounds how often retention runs. It is a single indexed
+	// DELETE, but there is no reason to run it per round.
+	pruneEvery = time.Hour
 )
 
 // Options configures a sweep.
@@ -109,12 +120,29 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 	// make every registry wait for the slowest.
 	lims := newLimiters(opts.Limits)
 
+	// Prune once at startup, then hourly. Doing it here rather than in a
+	// separate command means retention happens for anyone who runs the sweep,
+	// instead of being a chore nobody remembers.
+	lastPrune := time.Now()
+	if n, err := db.PruneAttempts(ctx, pruneCutoff()); err != nil {
+		log.Printf("[sweep] pruning attempts: %v", err)
+	} else if n > 0 {
+		log.Printf("[sweep] pruned %d attempts older than %s", n, AttemptRetention)
+	}
+
 	start := time.Now()
 	var done int64
 
 	for {
 		if err := ctx.Err(); err != nil {
 			return done, err
+		}
+
+		if time.Since(lastPrune) > pruneEvery {
+			lastPrune = time.Now()
+			if _, err := db.PruneAttempts(ctx, pruneCutoff()); err != nil {
+				log.Printf("[sweep] pruning attempts: %v", err)
+			}
 		}
 
 		suffixes, err := db.DueSuffixes(ctx)
@@ -377,6 +405,12 @@ func recentFailures(ctx context.Context, db *data.DB, domain string) int {
 		return 0
 	}
 	return int(n)
+}
+
+// pruneCutoff formats the retention boundary. PruneAttempts casts its argument
+// to TEXT for datetime(), and RFC3339Nano is the format the driver writes.
+func pruneCutoff() string {
+	return time.Now().Add(-AttemptRetention).UTC().Format(time.RFC3339Nano)
 }
 
 func sleep(ctx context.Context, d time.Duration) error {
