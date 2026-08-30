@@ -101,9 +101,7 @@ CREATE TABLE servers (
   last_success         DATETIME,
   last_failure         DATETIME,
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
-  rate_limited_until   DATETIME,
-  -- a 501 is permanent per server
-  supports_search      BOOLEAN
+  rate_limited_until   DATETIME
 );
 
 -- +goose Down

@@ -21,10 +21,6 @@ WHERE datetime(c.fresh_until) < datetime('now')
 ORDER BY c.priority DESC, c.queued_at ASC
 LIMIT ?;
 
--- name: FilterChecks :many
-SELECT domain FROM checks
-WHERE suffix = ? AND label_len = ? AND status = ?;
-
 -- name: GetCheck :one
 SELECT * FROM checks WHERE domain = ?;
 
@@ -47,11 +43,24 @@ ON CONFLICT(domain) DO UPDATE SET
 INSERT OR IGNORE INTO checks (domain, status, fresh_until, priority)
 VALUES (?, 'unchecked', ?, ?);
 
--- name: CountBySuffixLen :many
-SELECT suffix, label_len, status, COUNT(*) AS n
+-- name: Progress :many
+-- How far the sweep has got, per suffix.
+--
+-- Also answers whether DNS-in-front would pay for a given TLD: it is worth
+-- doing only where most candidates are registered, and this reports that ratio
+-- from real data rather than a sample.
+SELECT
+  suffix,
+  -- CAST because sqlc types a bare SUM() of a boolean as *float64.
+  COUNT(*)                                                    AS total,
+  CAST(SUM(status = 'unchecked') AS INTEGER)                  AS unchecked,
+  CAST(SUM(status = 'registered') AS INTEGER)                 AS registered,
+  CAST(SUM(status = 'not_found') AS INTEGER)                  AS available,
+  CAST(SUM(status = 'unknown') AS INTEGER)                    AS unknown,
+  CAST(SUM(datetime(fresh_until) < datetime('now')) AS INTEGER) AS due
 FROM checks
-GROUP BY suffix, label_len, status
-ORDER BY suffix, label_len, status;
+GROUP BY suffix
+ORDER BY suffix;
 
 -- name: CountChecks :one
 SELECT COUNT(*) FROM checks;
@@ -176,3 +185,6 @@ WHERE c.suffix = ?
   AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
 ORDER BY c.priority DESC, c.queued_at ASC
 LIMIT ?;
+
+-- name: CountAttempts :one
+SELECT COUNT(*) FROM attempts;

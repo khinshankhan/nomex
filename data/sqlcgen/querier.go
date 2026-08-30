@@ -12,7 +12,7 @@ type Querier interface {
 	// Only for the three kinds that describe the domain: ErrNoServer,
 	// ErrInvalidQuery, ErrRefused. Everything else goes to attempts.
 	BlockDomain(ctx context.Context, arg BlockDomainParams) error
-	CountBySuffixLen(ctx context.Context) ([]CountBySuffixLenRow, error)
+	CountAttempts(ctx context.Context) (int64, error)
 	CountChecks(ctx context.Context) (int64, error)
 	// Drives the backoff exponent. Bounded by time rather than counting the whole
 	// history, so a domain that failed last year starts fresh.
@@ -45,7 +45,6 @@ type Querier interface {
 	// paced every registry to the slowest -- .com ran at .dev's rate rather than
 	// ten times it.
 	DueSuffixes(ctx context.Context) ([]DueSuffixesRow, error)
-	FilterChecks(ctx context.Context, arg FilterChecksParams) ([]string, error)
 	GetCheck(ctx context.Context, domain string) (Check, error)
 	IsBlocked(ctx context.Context, domain string) (bool, error)
 	// The report query. Every filter is optional: passing the zero value for one
@@ -58,6 +57,12 @@ type Querier interface {
 	// CAST so sqlc can infer a type: through a bare OR comparison it gives up and
 	// generates interface{}.
 	ListChecks(ctx context.Context, arg ListChecksParams) ([]ListChecksRow, error)
+	// How far the sweep has got, per suffix.
+	//
+	// Also answers whether DNS-in-front would pay for a given TLD: it is worth
+	// doing only where most candidates are registered, and this reports that ratio
+	// from real data rather than a sample.
+	Progress(ctx context.Context) ([]ProgressRow, error)
 	PruneAttempts(ctx context.Context, before string) (int64, error)
 	RecentAttempts(ctx context.Context, arg RecentAttemptsParams) ([]Attempt, error)
 	RecordAttempt(ctx context.Context, arg RecordAttemptParams) error

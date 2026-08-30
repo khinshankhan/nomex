@@ -44,5 +44,4 @@ type Server struct {
 	LastFailure         *sqltime.UTC
 	ConsecutiveFailures int64
 	RateLimitedUntil    *sqltime.UTC
-	SupportsSearch      *bool
 }

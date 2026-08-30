@@ -30,46 +30,15 @@ func (q *Queries) BlockDomain(ctx context.Context, arg BlockDomainParams) error 
 	return err
 }
 
-const countBySuffixLen = `-- name: CountBySuffixLen :many
-SELECT suffix, label_len, status, COUNT(*) AS n
-FROM checks
-GROUP BY suffix, label_len, status
-ORDER BY suffix, label_len, status
+const countAttempts = `-- name: CountAttempts :one
+SELECT COUNT(*) FROM attempts
 `
 
-type CountBySuffixLenRow struct {
-	Suffix   string
-	LabelLen int64
-	Status   string
-	N        int64
-}
-
-func (q *Queries) CountBySuffixLen(ctx context.Context) ([]CountBySuffixLenRow, error) {
-	rows, err := q.db.QueryContext(ctx, countBySuffixLen)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []CountBySuffixLenRow{}
-	for rows.Next() {
-		var i CountBySuffixLenRow
-		if err := rows.Scan(
-			&i.Suffix,
-			&i.LabelLen,
-			&i.Status,
-			&i.N,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+func (q *Queries) CountAttempts(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAttempts)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countChecks = `-- name: CountChecks :one
@@ -246,40 +215,6 @@ func (q *Queries) DueSuffixes(ctx context.Context) ([]DueSuffixesRow, error) {
 	return items, nil
 }
 
-const filterChecks = `-- name: FilterChecks :many
-SELECT domain FROM checks
-WHERE suffix = ? AND label_len = ? AND status = ?
-`
-
-type FilterChecksParams struct {
-	Suffix   string
-	LabelLen int64
-	Status   string
-}
-
-func (q *Queries) FilterChecks(ctx context.Context, arg FilterChecksParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, filterChecks, arg.Suffix, arg.LabelLen, arg.Status)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var domain string
-		if err := rows.Scan(&domain); err != nil {
-			return nil, err
-		}
-		items = append(items, domain)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getCheck = `-- name: GetCheck :one
 SELECT domain, status, source, checked_at, fresh_until, expiration, registered_at, server, stale, priority, queued_at, suffix, label_len FROM checks WHERE domain = ?
 `
@@ -376,6 +311,67 @@ func (q *Queries) ListChecks(ctx context.Context, arg ListChecksParams) ([]ListC
 			&i.FreshUntil,
 			&i.Expiration,
 			&i.Stale,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const progress = `-- name: Progress :many
+SELECT
+  suffix,
+  -- CAST because sqlc types a bare SUM() of a boolean as *float64.
+  COUNT(*)                                                    AS total,
+  CAST(SUM(status = 'unchecked') AS INTEGER)                  AS unchecked,
+  CAST(SUM(status = 'registered') AS INTEGER)                 AS registered,
+  CAST(SUM(status = 'not_found') AS INTEGER)                  AS available,
+  CAST(SUM(status = 'unknown') AS INTEGER)                    AS unknown,
+  CAST(SUM(datetime(fresh_until) < datetime('now')) AS INTEGER) AS due
+FROM checks
+GROUP BY suffix
+ORDER BY suffix
+`
+
+type ProgressRow struct {
+	Suffix     string
+	Total      int64
+	Unchecked  int64
+	Registered int64
+	Available  int64
+	Unknown    int64
+	Due        int64
+}
+
+// How far the sweep has got, per suffix.
+//
+// Also answers whether DNS-in-front would pay for a given TLD: it is worth
+// doing only where most candidates are registered, and this reports that ratio
+// from real data rather than a sample.
+func (q *Queries) Progress(ctx context.Context) ([]ProgressRow, error) {
+	rows, err := q.db.QueryContext(ctx, progress)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProgressRow{}
+	for rows.Next() {
+		var i ProgressRow
+		if err := rows.Scan(
+			&i.Suffix,
+			&i.Total,
+			&i.Unchecked,
+			&i.Registered,
+			&i.Available,
+			&i.Unknown,
+			&i.Due,
 		); err != nil {
 			return nil, err
 		}
@@ -535,7 +531,7 @@ func (q *Queries) SeedCheck(ctx context.Context, arg SeedCheckParams) (int64, er
 }
 
 const serverState = `-- name: ServerState :one
-SELECT origin, last_success, last_failure, consecutive_failures, rate_limited_until, supports_search FROM servers WHERE origin = ?
+SELECT origin, last_success, last_failure, consecutive_failures, rate_limited_until FROM servers WHERE origin = ?
 `
 
 func (q *Queries) ServerState(ctx context.Context, origin string) (Server, error) {
@@ -547,7 +543,6 @@ func (q *Queries) ServerState(ctx context.Context, origin string) (Server, error
 		&i.LastFailure,
 		&i.ConsecutiveFailures,
 		&i.RateLimitedUntil,
-		&i.SupportsSearch,
 	)
 	return i, err
 }
