@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/khinshankhan/nomex/check"
+	"github.com/khinshankhan/nomex/check/dnschecker"
 	"github.com/khinshankhan/nomex/check/rdapchecker"
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/platform"
@@ -29,6 +30,7 @@ func runSweep(ctx context.Context, args []string) error {
 	limit := flags.Int64("limit", 0, "stop after this many checks (0 = until interrupted)")
 	once := flags.Bool("once", false, "run a single round and exit")
 	quiet := flags.Bool("quiet", false, "only report the summary")
+	useDNS := flags.Bool("dns", false, "check DNS first; skips RDAP for domains that resolve")
 
 	flags.Usage = func() {
 		fmt.Fprint(os.Stderr, `usage: nomex sweep [flags]
@@ -73,6 +75,12 @@ flags:
 		return err
 	}
 
+	var preCheck check.Checker
+	if *useDNS {
+		preCheck = dnschecker.New()
+		fmt.Fprintln(os.Stderr, "dns pre-check enabled: registered domains skip RDAP, but store no expiry")
+	}
+
 	fmt.Fprintf(os.Stderr, "sweeping at %g/s per registry (burst %d), %d workers\n", *rate, *burst, *workers)
 
 	var registered, available, failed, skipped int64
@@ -87,6 +95,7 @@ flags:
 		Limit:       *limit,
 		Once:        *once,
 		Origins:     origins,
+		PreCheck:    preCheck,
 		Progress: func(s sweep.Stat) {
 			if s.Skipped {
 				skipped++

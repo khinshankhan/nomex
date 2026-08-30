@@ -74,6 +74,17 @@ type Options struct {
 	// Progress, if set, is called after each result is stored.
 	Progress func(Stat)
 
+	// PreCheck, if set, runs before the main checker and short-circuits when
+	// it establishes a status. Intended for DNS, which can prove a domain is
+	// registered without spending an RDAP query.
+	//
+	// It pays in proportion to how registered a suffix is -- measured here,
+	// .com and .net at 1-2 characters are 100% registered and .dev is 5% -- so
+	// it is worth enabling for dense suffixes and a waste for sparse ones.
+	// A pre-check failure is ignored rather than recorded: it established
+	// nothing, and the real checker is about to run anyway.
+	PreCheck check.Checker
+
 	// Origins, if set, maps a domain to the RDAP server that would serve it,
 	// so a throttled registry can be skipped before a query is spent on it.
 	// Without it the sweep still runs, it just cannot avoid known-bad servers.
@@ -321,7 +332,18 @@ func round(
 					continue
 				}
 
-				res := checkWithRetry(ctx, checker, lims, backoff, domain, origin, attempts)
+				// DNS first, when configured. It can only establish the
+				// positive: anything else falls through to the real checker.
+				var res check.Result
+				if opts.PreCheck != nil {
+					if pre := opts.PreCheck.Check(ctx, domain); pre.Status == check.StatusRegistered {
+						pre.Origin = origin
+						res = pre
+					}
+				}
+				if res.Status == check.StatusUnchecked || res.Status == "" {
+					res = checkWithRetry(ctx, checker, lims, backoff, domain, origin, attempts)
+				}
 
 				failures := 0
 				if res.Failed() {
