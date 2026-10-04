@@ -14,11 +14,12 @@ import (
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
 	"github.com/khinshankhan/nomex/data/sqltime"
+	"github.com/khinshankhan/nomex/platform/config"
 )
 
 func runList(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("list", flag.ContinueOnError)
-	dbPath := flags.String("db", defaultDBPath, "path to the database")
+	dbPath := flags.String("db", config.DB(), "path to the database")
 	status := flags.String("status", string(check.StatusNotFound), "status to list; empty for all")
 	tld := flags.String("tld", "", "restrict to one suffix")
 	length := flags.Int64("len", 0, "restrict to labels of this length")

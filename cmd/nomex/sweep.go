@@ -12,6 +12,7 @@ import (
 	"github.com/khinshankhan/nomex/check/rdapchecker"
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/platform"
+	"github.com/khinshankhan/nomex/platform/config"
 	"github.com/khinshankhan/nomex/sweep"
 )
 
@@ -21,7 +22,7 @@ const contactURL = "https://github.com/khinshankhan/nomex"
 
 func runSweep(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("sweep", flag.ContinueOnError)
-	dbPath := flags.String("db", defaultDBPath, "path to the database")
+	dbPath := flags.String("db", config.DB(), "path to the database")
 	rate := flags.Float64("rate", 1, "queries per second, per registry")
 	burst := flags.Int("burst", sweep.DefaultLimits.Burst, "queries allowed back-to-back per registry")
 	attempts := flags.Int("attempts", sweep.DefaultMaxAttempts, "retries per domain within one sweep")

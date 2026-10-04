@@ -11,6 +11,7 @@ import (
 
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/gather"
+	"github.com/khinshankhan/nomex/platform/config"
 )
 
 // runGather seeds candidate domains into the database.
@@ -21,7 +22,7 @@ import (
 // the whole space up front.
 func runGather(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("gather", flag.ContinueOnError)
-	dbPath := flags.String("db", defaultDBPath, "path to the database")
+	dbPath := flags.String("db", config.DB(), "path to the database")
 	tlds := flags.String("tlds", "com,net", "comma-separated TLDs")
 	minLen := flags.Int("min", 1, "shortest label to generate")
 	maxLen := flags.Int("max", 3, "longest label to generate")

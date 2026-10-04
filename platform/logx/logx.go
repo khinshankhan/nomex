@@ -6,14 +6,14 @@
 package logx
 
 import (
-	"os"
-	"strings"
 	"time"
 
 	"github.com/khinshankhan/logstox"
 	"github.com/khinshankhan/logstox/adapter"
 	"github.com/khinshankhan/logstox/backend/zapx"
 	"github.com/khinshankhan/logstox/fields"
+
+	"github.com/khinshankhan/nomex/platform/config"
 )
 
 // Logger is what every call site holds.
@@ -60,8 +60,8 @@ var defaultLogger = New(Config{
 	Name: "nomex",
 	// JSON when asked for, console otherwise. A long sweep is normally watched
 	// by a person.
-	Development: !strings.EqualFold(os.Getenv("NOMEX_LOG"), "json"),
-	AddSource:   strings.EqualFold(os.Getenv("NOMEX_LOG_SOURCE"), "true"),
+	Development: !config.JSONLogs(),
+	AddSource:   config.LogSource(),
 })
 
 // Default returns the process logger.

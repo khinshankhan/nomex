@@ -14,10 +14,6 @@ import (
 	"syscall"
 )
 
-// defaultDBPath matches the Makefile's DB variable, so the CLI and `make
-// migrate` operate on the same database without configuration.
-const defaultDBPath = "./var/nomex.db"
-
 func main() {
 	// One context every subsystem watches, cancelled on SIGINT/SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

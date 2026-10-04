@@ -8,11 +8,12 @@ import (
 	"text/tabwriter"
 
 	"github.com/khinshankhan/nomex/data"
+	"github.com/khinshankhan/nomex/platform/config"
 )
 
 func runStatus(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
-	dbPath := flags.String("db", defaultDBPath, "path to the database")
+	dbPath := flags.String("db", config.DB(), "path to the database")
 
 	flags.Usage = func() {
 		fmt.Fprint(os.Stderr, `usage: nomex status [flags]
