@@ -31,6 +31,7 @@ func runGather(ctx context.Context, args []string) error {
 	batch := flags.Int("batch", gather.DefaultBatch, "rows per transaction")
 	dryRun := flags.Bool("n", false, "report the size of the space and exit")
 	force := flags.Bool("y", false, "skip the confirmation prompt for large runs")
+	namesFrom := flags.String("names", "", "seed names from this file, one per line, instead of generating (- for stdin)")
 
 	flags.Usage = func() {
 		fmt.Fprint(os.Stderr, `usage: nomex gather [flags]
@@ -41,6 +42,7 @@ space re-walks the earlier candidates without resetting them.
   nomex gather -tlds dev -max 2
   nomex gather -tlds dev -max 3          # adds only the 3-character labels
   nomex gather -tlds dev,net -max 4 -n   # size the space first
+  nomex gather -tlds com,dev -names words.txt
 
 flags:
 `)
@@ -48,6 +50,10 @@ flags:
 	}
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+
+	if *namesFrom != "" {
+		return gatherNames(ctx, *dbPath, *namesFrom, splitList(*tlds), *priority, *dryRun)
 	}
 
 	spec := gather.Spec{
@@ -115,6 +121,49 @@ flags:
 
 	fmt.Fprintf(os.Stderr, "seeded %s new rows (%s already present)\n",
 		commas(inserted), commas(total-inserted))
+	return nil
+}
+
+// gatherNames seeds a chosen list rather than a generated space, so the sweep
+// works through names someone actually wants.
+func gatherNames(ctx context.Context, dbPath, from string, tlds []string, priority int64, dryRun bool) error {
+	in := os.Stdin
+	if from != "-" {
+		f, err := os.Open(from)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		in = f
+	}
+
+	names, err := gather.ReadNames(in)
+	if err != nil {
+		return err
+	}
+	domains, err := gather.Names(names, tlds)
+	if err != nil {
+		return &usageError{err.Error()}
+	}
+
+	fmt.Fprintf(os.Stderr, "%s names: %s candidates\n", commas(int64(len(names))), commas(int64(len(domains))))
+	if dryRun {
+		return nil
+	}
+
+	db, err := data.Open(ctx, dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	inserted, err := gather.SeedDomains(ctx, db, domains, priority)
+	if err != nil {
+		return fmt.Errorf("seeded %s rows before stopping: %w", commas(inserted), err)
+	}
+
+	fmt.Fprintf(os.Stderr, "seeded %s new rows (%s already present)\n",
+		commas(inserted), commas(int64(len(domains))-inserted))
 	return nil
 }
 
