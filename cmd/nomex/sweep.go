@@ -16,10 +16,6 @@ import (
 	"github.com/khinshankhan/nomex/sweep"
 )
 
-// contactURL is sent to every registry we query, so an operator who wants to
-// complain can find someone rather than just blocking the address.
-const contactURL = "https://github.com/khinshankhan/nomex"
-
 func runSweep(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("sweep", flag.ContinueOnError)
 	dbPath := flags.String("db", config.DB(), "path to the database")
@@ -52,18 +48,19 @@ flags:
 		return err
 	}
 
+	// Before anything is queried: a registry has to be able to reach whoever
+	// is querying it.
+	if err := requireContact(); err != nil {
+		return err
+	}
+
 	db, err := data.Open(ctx, *dbPath)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	ua := platform.UserAgent(platform.Version("nomex"), platform.UserAgentOptions{
-		Name:  "nomex",
-		URL:   contactURL,
-		Extra: map[string]string{"service": "rdap"},
-	})
-	checker, err := rdapchecker.New(ua)
+	checker, err := rdapchecker.New(userAgent(platform.Version("nomex")))
 	if err != nil {
 		return err
 	}
