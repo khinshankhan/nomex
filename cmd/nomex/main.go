@@ -51,6 +51,8 @@ func run(ctx context.Context, args []string) error {
 		return runGather(ctx, args[1:])
 	case "sweep":
 		return runSweep(ctx, args[1:])
+	case "check":
+		return runCheck(ctx, args[1:])
 	case "list":
 		return runList(ctx, args[1:])
 	case "status":
@@ -80,6 +82,7 @@ usage:
   nomex serve           run the HTTP API
   nomex gather          seed candidate domains
   nomex sweep           check domains whose answers have gone stale
+  nomex check           check specific names now
   nomex list            report what the database knows
   nomex status          how far the sweep has got
   nomex help            this message

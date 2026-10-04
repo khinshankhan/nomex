@@ -457,3 +457,34 @@ func sleep(ctx context.Context, d time.Duration) error {
 func Cancelled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
+
+// CheckDomains checks exactly the given domains, once each, through the same
+// pipeline as Run: per-origin rate limits, retries, the optional pre-check, and
+// skipping registries that asked us to wait. Results are stored as Run stores
+// them.
+//
+// Every domain must already have a row; seed them first. Limit, Once and Batch
+// are ignored, since the list itself is the bound.
+func CheckDomains(ctx context.Context, db *data.DB, checker check.Checker, domains []string, opts Options) (int64, error) {
+	workers := opts.Workers
+	if workers <= 0 {
+		workers = DefaultWorkers
+	}
+	attempts := opts.MaxAttempts
+	if attempts <= 0 {
+		attempts = DefaultMaxAttempts
+	}
+	opts.Limit = 0
+
+	throttled, err := db.Throttled(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	var (
+		total atomic.Int64
+		mu    sync.Mutex
+	)
+	err = round(ctx, db, checker, domains, newLimiters(opts.Limits), attempts, workers, opts, &total, time.Now(), throttled, &mu)
+	return total.Load(), err
+}
