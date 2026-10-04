@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/khinshankhan/nomex/check"
@@ -81,7 +82,10 @@ flags:
 
 	fmt.Fprintf(os.Stderr, "sweeping at %g/s per registry (burst %d), %d workers\n", *rate, *burst, *workers)
 
-	var registered, available, failed, skipped int64
+	var (
+		mu                                     sync.Mutex
+		registered, available, failed, skipped int64
+	)
 	done, err := sweep.Run(ctx, db, checker, sweep.Options{
 		Limits: sweep.Limits{
 			Every: time.Duration(float64(time.Second) / *rate),
@@ -95,6 +99,10 @@ flags:
 		Origins:     origins,
 		PreCheck:    preCheck,
 		Progress: func(s sweep.Stat) {
+			// Workers report concurrently, and each suffix runs its own pool.
+			mu.Lock()
+			defer mu.Unlock()
+
 			if s.Skipped {
 				skipped++
 				if !*quiet {
