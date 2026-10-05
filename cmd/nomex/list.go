@@ -38,8 +38,7 @@ Reports what the database knows. Defaults to available domains.
   nomex list -fresh -v                only trustworthy answers, with ages
   nomex list -o available-domains.txt
 
-An answer past its TTL is still shown by default, marked stale: knowing
-the answer is old is different from not having one.
+Answers past their TTL are still shown by default, marked stale.
 
 flags:
 `)
@@ -55,7 +54,7 @@ flags:
 	}
 	defer db.Close()
 
-	// The query treats 0 as "no limit"; SQLite wants -1.
+	// SQLite wants -1 for no limit
 	lim := *limit
 	if lim <= 0 {
 		lim = -1
@@ -100,7 +99,7 @@ flags:
 	}
 	buf.Flush()
 
-	// To stderr so it does not land in a redirected list.
+	// stderr so it doesn't end up in a redirected list
 	fmt.Fprintf(os.Stderr, "%d rows", len(rows))
 	if stale > 0 {
 		fmt.Fprintf(os.Stderr, ", %d past their TTL", stale)
@@ -116,8 +115,7 @@ func boolArg(b bool) int64 {
 	return 0
 }
 
-// age reports how long ago the answer was established, which is the number
-// that says how much to trust it.
+// age reports how long ago the answer was established.
 func age(now time.Time, checked *sqltime.UTC) string {
 	if checked == nil {
 		return "never"

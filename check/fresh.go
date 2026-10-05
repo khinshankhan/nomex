@@ -13,45 +13,37 @@ const (
 	StatusUnknown    Status = "unknown"
 )
 
-// TTL policy. These are guesses until there is real data to tune against; they
-// are the first thing to revisit once the sweep has run.
+// TTL policy. Mostly guesses for now, tune once there is real sweep data.
 const (
-	// NotFoundTTL is short because an available domain can be taken at any
-	// moment, and a stale "available" is the answer most likely to embarrass.
+	// NotFoundTTL is short since an available domain can be registered at any time.
 	NotFoundTTL = 6 * time.Hour
 
 	// NoExpiryTTL applies when a registry reports a domain as registered but
 	// does not say when the registration ends.
 	NoExpiryTTL = 30 * 24 * time.Hour
 
-	// MaxTTL caps everything. Without it a 2027 expiry would go unlooked-at
-	// for eleven months, and a transfer, deletion or status change in the
-	// meantime would go unnoticed.
+	// MaxTTL caps everything so a far off expiry still gets checked for
+	// transfers, deletions and status changes.
 	MaxTTL = 90 * 24 * time.Hour
 
-	// PostExpiryDelay is roughly how long a gTLD takes to actually drop after
-	// expiring: auto-renew grace, then redemption, then pending delete. ICANN
-	// puts the whole lifecycle at 30-75 days, so expiry is not availability.
+	// PostExpiryDelay is roughly how long a gTLD takes to drop after expiring
+	// (grace, redemption, pending delete). ICANN puts it at 30-75 days.
 	PostExpiryDelay = 75 * 24 * time.Hour
 
-	// ExpiredRecheck is how often to look at a domain that is past its expiry
-	// but not yet dropped. Weekly rather than sleeping for the full window,
-	// because registrars vary and it is a small set.
+	// ExpiredRecheck is how often to check an expired domain that has not
+	// dropped yet. Registrars vary, so this polls through the whole window.
 	ExpiredRecheck = 7 * 24 * time.Hour
 
-	// UnknownTTL applies when a check completed but could not classify the
-	// answer. Short, because "we do not know" is not a result worth caching.
+	// UnknownTTL applies when a check completed but the answer could not be
+	// classified.
 	UnknownTTL = time.Hour
 )
 
 // FreshUntil returns when a result stops being trustworthy.
 //
-// Expiry is folded in here rather than consulted by the scheduler, which keeps
-// the sweep read a single indexed scan and puts all the policy in one place.
-//
-// A registered domain has two interesting moments, not one: around expiry (did
-// they renew?) and about 75 days later (did it drop?). Between them nothing
-// changes, and after a renewal nothing changes for another year.
+// Expiry is handled here instead of in the scheduler so the sweep query stays a
+// single indexed scan. A registered domain is worth checking just after expiry
+// (renewed?) and again about 75 days later (dropped?).
 func FreshUntil(now time.Time, status Status, expiration *time.Time) time.Time {
 	switch {
 	case status == StatusNotFound:
@@ -64,36 +56,28 @@ func FreshUntil(now time.Time, status Status, expiration *time.Time) time.Time {
 		return now.Add(NoExpiryTTL)
 
 	case expiration.After(now):
-		// Look again just after expiry to see whether it was renewed, capped
-		// so a far-future expiry still gets an occasional look.
+		// just after expiry, to see if it was renewed
 		return earliest(expiration.Add(24*time.Hour), now.Add(MaxTTL))
 
 	case now.Before(expiration.Add(PostExpiryDelay)):
-		// Expired but inside the drop window: grace, redemption and pending
-		// delete run about 75 days, and the name could become available on any
-		// day of it. Weekly, rather than sleeping through the whole window,
-		// because registrars vary and this is a small set.
+		// expired but not dropped yet, it could free up any day
 		return now.Add(ExpiredRecheck)
 
 	default:
-		// Past the drop window and still registered, so it was renewed or
-		// transferred and the expiry we hold is simply stale. Ordinary cadence.
-		//
-		// Reached by anything expired long ago. Deriving the answer from that
-		// old expiry would return a time in the PAST, leaving the row
-		// permanently due and the sweep spinning on it.
+		// past the drop window and still registered, so it was renewed or
+		// transferred and the stored expiry is stale
+		// NOTE: deriving from the old expiry gives a time in the past, which
+		// leaves the row due forever
 		return now.Add(NoExpiryTTL)
 	}
 }
 
-// Backoff returns when to look again after a failed attempt.
+// Backoff returns when to look again after a failed attempt. A server's
+// Retry-After wins, otherwise the delay doubles per consecutive failure, up to
+// a day.
 //
-// This is what stands in for consulting attempts.retry_after in the scheduler
-// query: pushing fresh_until forward keeps the sweep read on its index.
-//
-// A server-supplied Retry-After wins outright -- it is the one number that is
-// not a guess. Otherwise the delay doubles per consecutive failure, capped, so
-// a server that is down stops being hammered without dropping its domains.
+// Pushing fresh_until forward stands in for checking attempts.retry_after in the
+// sweep query, which keeps that query on its index.
 func Backoff(now time.Time, failures int, retryAfter time.Duration) time.Time {
 	const (
 		base = 5 * time.Minute

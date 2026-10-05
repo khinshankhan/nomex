@@ -17,8 +17,8 @@ const (
 	// defaultAddr is where serve listens.
 	defaultAddr = 8080
 
-	// shutdownGrace bounds the drain. Unbounded, one hung request holds the
-	// process open forever.
+	// shutdownGrace bounds the drain so a hung request can't hold the process
+	// open forever.
 	shutdownGrace = 10 * time.Second
 )
 
@@ -35,7 +35,7 @@ type httpServer struct {
 }
 
 func newHTTPServer(addr string) *httpServer {
-	// First listed runs outermost, so Recover sees panics from BlackHole too.
+	// first listed runs outermost, so Recover sees panics from BlackHole too
 	// TODO: add CORS here
 	handler := middleware.Chain(
 		middleware.Recover,
@@ -58,19 +58,18 @@ func (s *httpServer) run(ctx context.Context) error {
 		listening <- s.srv.ListenAndServe()
 	}()
 
-	// ListenAndServe blocks, so a failure arrives on a channel while
-	// cancellation arrives on the context. Returning the listener error rather
-	// than logging it matters: a swallowed "address already in use" would leave
-	// the process up with nothing serving.
+	// listener errors come back on a channel, cancellation on the context
+	// NOTE: return the listener error instead of logging it, a swallowed
+	// "address already in use" leaves the process up with nothing serving
 	select {
 	case err := <-listening:
-		// Only reachable when the server stopped on its own.
+		// only reachable when the server stopped on its own
 		return err
 
 	case <-ctx.Done():
 		logx.Default().Named("http").Info("shutting down")
 
-		// Fresh context: ctx is already cancelled and would abort the drain.
+		// fresh context since ctx is already cancelled
 		shutCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
 
@@ -78,7 +77,7 @@ func (s *httpServer) run(ctx context.Context) error {
 			return fmt.Errorf("shutting down: %w", err)
 		}
 
-		// ErrServerClosed means Shutdown was called: the success case.
+		// ErrServerClosed means Shutdown was called, which is fine
 		if err := <-listening; !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}

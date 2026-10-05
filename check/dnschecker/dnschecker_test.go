@@ -9,9 +9,8 @@ import (
 	"github.com/khinshankhan/nomex/check"
 )
 
-// The classification that matters: a resolver failure must never look like an
-// answer. The old implementation returned 500 here and stored it alongside real
-// results, then banned the domain on timeout.
+// A resolver failure must never look like an answer. The old code returned a
+// 500 here, stored it with the real results, and blocked domains on timeout.
 func TestCheckSeparatesFailureFromAnswer(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -22,8 +21,8 @@ func TestCheckSeparatesFailureFromAnswer(t *testing.T) {
 		wantErrKind string
 	}{
 		{
-			// Authoritative "does not resolve". A real answer, but an
-			// uninformative one: a registered domain need not be delegated.
+			// authoritative "does not resolve", a registered domain doesn't
+			// have to be delegated
 			name:       "not found is not available",
 			err:        &net.DNSError{Err: "no such host", IsNotFound: true},
 			wantStatus: check.StatusUnknown,
@@ -72,7 +71,7 @@ func TestCheckSeparatesFailureFromAnswer(t *testing.T) {
 			if tt.wantErrKind != "" && got.ErrKind != tt.wantErrKind {
 				t.Errorf("ErrKind = %q, want %q", got.ErrKind, tt.wantErrKind)
 			}
-			// Nothing DNS learns ever justifies blocking a domain permanently.
+			// nothing from DNS should ever block a domain
 			if got.BlockReason != "" {
 				t.Errorf("BlockReason = %q; DNS cannot establish a permanent fact", got.BlockReason)
 			}
@@ -92,8 +91,7 @@ func TestCheckRegisteredWhenDelegated(t *testing.T) {
 	if got.Failed() {
 		t.Errorf("reported an error: %v", got.Err)
 	}
-	// The cost of a DNS answer: no expiry, so the row falls back to the
-	// default TTL and returns for a full RDAP check later.
+	// no expiry from DNS, so the row gets the default TTL
 	if got.Expiration != nil {
 		t.Error("DNS produced an expiration date, which it cannot know")
 	}
@@ -102,7 +100,7 @@ func TestCheckRegisteredWhenDelegated(t *testing.T) {
 	}
 }
 
-// StatusNotFound means "available", and DNS is never entitled to say it.
+// DNS can never report StatusNotFound.
 func TestCheckNeverReportsNotFound(t *testing.T) {
 	cases := []struct {
 		ns  []*net.NS
@@ -136,8 +134,7 @@ func TestCheckRespectsContext(t *testing.T) {
 	}
 }
 
-// fakeLookup always returns ns and err, so classification is tested without a
-// network.
+// fakeLookup always returns ns and err, so tests don't need a network.
 func fakeLookup(ns []*net.NS, err error) Option {
 	return withLookup(func(context.Context, string) ([]*net.NS, error) {
 		return ns, err

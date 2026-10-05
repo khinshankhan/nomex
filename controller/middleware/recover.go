@@ -9,16 +9,16 @@ import (
 	"github.com/khinshankhan/nomex/platform/logx"
 )
 
-// Recover turns a panic into a 500, unless the response has already started --
-// once a status is on the wire a second WriteHeader is ignored, so truncating
-// is the honest failure.
+// Recover turns a panic into a 500, unless the response already started. A
+// second WriteHeader is ignored at that point, so the response just gets cut
+// off.
 func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rw := &recorder{wrapper: wrapper{ResponseWriter: w}}
 
 		defer func() {
 			if err := recover(); err != nil {
-				// ErrAbortHandler is a deliberate silent abort; propagate it.
+				// ErrAbortHandler is an intentional abort, pass it along
 				if err == http.ErrAbortHandler {
 					panic(err)
 				}

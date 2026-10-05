@@ -1,8 +1,5 @@
-// Package logx is nomex's logger: logstox as the interface, zap underneath.
-//
-// The indirection is the point. Call sites depend on logstox's Field type, so
-// the backend is a decision made here rather than one spread across every
-// package that logs.
+// Package logx is nomex's logger, logstox as the interface with zap
+// underneath. Call sites only see logstox, so the backend can change here.
 package logx
 
 import (
@@ -19,18 +16,16 @@ import (
 // Logger is what every call site holds.
 type Logger = adapter.Adapter[zapx.ZapField, fields.Field]
 
-// Field is re-exported so callers import one package rather than two.
+// Field is re-exported so callers only need one import.
 type Field = fields.Field
 
 // Config describes a logger.
 type Config struct {
-	// Name tags every line, so output from several subsystems in one process
-	// stays attributable.
+	// Name tags every line.
 	Name string
 
-	// Development selects human-readable console output over JSON. A sweep
-	// runs for days and is usually watched in a terminal, so it defaults on;
-	// set NOMEX_LOG=json for machine-readable output instead.
+	// Development selects console output over JSON. It defaults on since a
+	// sweep is usually watched in a terminal, NOMEX_LOG=json turns it off.
 	Development bool
 
 	// AddSource includes the calling file and line.
@@ -43,8 +38,7 @@ func New(cfg Config) Logger {
 		Development: cfg.Development,
 		TimeLayout:  time.RFC3339Nano,
 		AddSource:   cfg.AddSource,
-		// The adapter sits between the call site and zap, so without this the
-		// reported caller is the adapter rather than whoever logged.
+		// skip the adapter frame so the caller is whoever actually logged
 		CallerSkip: 2,
 	}
 
@@ -54,12 +48,10 @@ func New(cfg Config) Logger {
 	}
 }
 
-// defaultLogger is built at init: there is nothing to defer, and it saves an
-// atomic load on every call.
+// defaultLogger is built at init, there's nothing to defer.
 var defaultLogger = New(Config{
 	Name: "nomex",
-	// JSON when asked for, console otherwise. A long sweep is normally watched
-	// by a person.
+	// JSON when asked for, console otherwise
 	Development: !config.JSONLogs(),
 	AddSource:   config.LogSource(),
 })

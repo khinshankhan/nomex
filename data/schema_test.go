@@ -8,16 +8,14 @@ import (
 	"testing"
 )
 
-// migrationDir is relative to this package. go:embed cannot reach outside the
-// package directory and will not follow a symlink, so the files are read at
-// run time instead.
+// migrationDir is relative to this package. go:embed can't reach outside the
+// package or follow symlinks, so the files are read at run time.
 const migrationDir = "../migrations"
 
 // openTest returns a DB with the schema applied.
 //
-// A temp file rather than :memory: -- an in-memory database cannot use WAL, and
-// Open verifies the journal mode, so testing against one would mean relaxing
-// the check this package exists to make. t.TempDir cleans up on its own.
+// NOTE: a temp file instead of :memory: since an in-memory database can't use
+// WAL, and Open checks for it.
 func openTest(t *testing.T) *DB {
 	t.Helper()
 

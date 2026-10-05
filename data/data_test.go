@@ -10,8 +10,7 @@ import (
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
-// The pragmas are the reason this package exists rather than callers holding a
-// *sql.DB, so they are worth asserting rather than trusting the DSN.
+// The pragmas are why this package wraps *sql.DB, so check they actually took.
 func TestOpenAppliesPragmas(t *testing.T) {
 	db := openTest(t)
 	ctx := context.Background()
@@ -93,10 +92,9 @@ func insert(ctx context.Context, q *sqlcgen.Queries, domain string) error {
 	})
 }
 
-// The driver writes time.Time in Go's own format unless told otherwise, and
-// SQLite's datetime() cannot parse it -- so the sweep's "is this due" test
-// falls back to string comparison, which agrees by accident often enough to
-// hide the problem.
+// Unless told otherwise the driver writes Go's time format, which datetime()
+// can't parse. Due checks then fall back to string comparison, which is right
+// often enough to hide the bug.
 func TestTimestampsAreSQLiteReadable(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()
@@ -122,8 +120,7 @@ func TestTimestampsAreSQLiteReadable(t *testing.T) {
 		t.Fatalf("datetime() could not parse the stored timestamp %s", raw)
 	}
 
-	// And date arithmetic against it has to work, since that is what the
-	// scheduler query does.
+	// date arithmetic has to work too, the sweep query relies on it
 	var due int
 	if err := db.sql.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM checks WHERE domain = 'fmt.dev' AND fresh_until > datetime('now')`).Scan(&due); err != nil {

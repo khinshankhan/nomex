@@ -20,8 +20,8 @@ func runStatus(ctx context.Context, args []string) error {
 
 Reports how far the sweep has got, per suffix.
 
-The registered ratio is worth reading: DNS-in-front only pays where most
-candidates are taken, and this is that number from real data.
+The registered ratio says whether -dns is worth it for a suffix, it only
+pays off where most candidates are taken.
 
 flags:
 `)
@@ -74,8 +74,7 @@ flags:
 	}
 	fmt.Fprintln(os.Stderr)
 
-	// Attempts is the table that grows without bound, so surface it before it
-	// becomes a surprise.
+	// attempts grows without bound, so show it
 	attempts, err := db.CountAttempts(ctx)
 	if err == nil && attempts > 0 {
 		fmt.Fprintf(os.Stderr, "%s recorded failures\n", commas(attempts))

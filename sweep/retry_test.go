@@ -41,7 +41,7 @@ func fastLimiters() *limiters {
 	return newLimiters(Limits{Every: time.Microsecond, Burst: 100})
 }
 
-// A momentary failure must not cost a full TTL cycle.
+// A momentary failure shouldn't cost a full backoff cycle.
 func TestRetrySucceedsAfterTransientFailure(t *testing.T) {
 	f := newFake(
 		check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true},
@@ -61,12 +61,12 @@ func TestRetrySucceedsAfterTransientFailure(t *testing.T) {
 	}
 }
 
-// A permanent failure will fail identically however often it is asked.
+// A permanent failure isn't retried, it would fail the same way.
 func TestRetryDoesNotRepeatPermanentFailures(t *testing.T) {
 	f := newFake(check.Result{
 		Status: check.StatusUnknown,
 		Err:    errors.New("malformed"),
-		// Not retryable.
+		// not retryable
 		BlockReason: "malformed domain name",
 	})
 
@@ -110,8 +110,7 @@ func TestRetryStopsOnCancellation(t *testing.T) {
 	}
 }
 
-// Workers must not retry in lockstep, or the pool arrives at a struggling
-// server as a stampede. This is why each gets its own seeded RNG.
+// Workers shouldn't retry in lockstep, which is why each gets its own RNG.
 func TestBackoffDiffersPerWorker(t *testing.T) {
 	a := newBackoff(0)
 	b := newBackoff(10_000)

@@ -10,15 +10,14 @@ import (
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
-// DefaultBatch is how many rows are written per transaction. Large enough that
-// per-commit overhead disappears, small enough that an interrupted run loses
-// little and holds the write lock briefly.
+// DefaultBatch is how many rows are written per transaction, big enough to
+// amortize commits and small enough to not hold the write lock for long.
 const DefaultBatch = 10_000
 
 // SeedOptions configures a seeding run.
 type SeedOptions struct {
-	// Priority for seeded rows. The sweep band is 0; use a negative value for
-	// bulk fill that should never outrank ordinary background work.
+	// Priority for seeded rows. The sweep uses 0, so go negative for bulk
+	// fill that shouldn't outrank regular work.
 	Priority int64
 
 	// Batch is rows per transaction. Zero means DefaultBatch.
@@ -30,9 +29,8 @@ type SeedOptions struct {
 
 // Progress reports how far a seeding run has got.
 type Progress struct {
-	// Seen is candidates generated so far, Inserted those that were new.
-	// They diverge when re-seeding over existing rows, which is the normal
-	// case when widening a space.
+	// Seen is candidates generated so far and Inserted is the ones that were
+	// new. They differ when re-seeding over existing rows.
 	Seen     int64
 	Inserted int64
 	Total    int64
@@ -56,13 +54,9 @@ func (p Progress) Remaining() time.Duration {
 	return time.Duration(float64(p.Total-p.Seen)/rate) * time.Second
 }
 
-// Seed writes every candidate in spec that is not already present.
-//
-// Existing rows are left alone: a domain already checked keeps its status,
-// freshness and priority, so widening a space (2 characters, then 3) re-walks
-// the earlier candidates cheaply rather than resetting them.
-//
-// Returns the number of rows actually inserted.
+// Seed writes every candidate in spec that isn't already present and returns
+// how many rows were inserted. Existing rows keep their status, freshness and
+// priority, so widening a space (2 characters, then 3) doesn't reset anything.
 func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64, error) {
 	if err := spec.Validate(); err != nil {
 		return 0, err
@@ -73,8 +67,7 @@ func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64,
 		batch = DefaultBatch
 	}
 
-	// Seeded rows are due immediately: the sweep finds work by looking for
-	// fresh_until in the past, so an unchecked row has to be already stale.
+	// due immediately, the sweep looks for fresh_until in the past
 	due := sqltime.At(time.Now().Add(-time.Minute))
 
 	total, err := spec.Count()
@@ -111,9 +104,7 @@ func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64,
 
 	for domain := range spec.All() {
 		if err := ctx.Err(); err != nil {
-			// Everything committed so far stays; the next run picks up where
-			// this one stopped because the same sequence is regenerated and
-			// already-present rows are skipped.
+			// committed batches stay, and a rerun skips what already landed
 			return inserted, err
 		}
 
@@ -133,12 +124,9 @@ func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64,
 	return inserted, nil
 }
 
-// insertBatch writes one transaction's worth, returning how many were new.
-//
-// The count comes from rows-affected per statement -- 1 for an inserted row, 0
-// for one OR IGNORE skipped -- rather than counting the table before and after.
-// At 10k rows per batch that saved two queries per batch, which is 7,400 round
-// trips over the full 37M candidate space.
+// insertBatch writes one transaction's worth and returns how many were new,
+// using rows affected per statement (1 inserted, 0 skipped by OR IGNORE)
+// instead of counting the table before and after.
 func insertBatch(ctx context.Context, db *data.DB, domains []string, due sqltime.UTC, priority int64) (int64, error) {
 	var inserted int64
 
@@ -157,7 +145,7 @@ func insertBatch(ctx context.Context, db *data.DB, domains []string, due sqltime
 		return nil
 	})
 	if err != nil {
-		// The transaction rolled back, so nothing in this batch landed.
+		// rolled back, nothing in this batch landed
 		return 0, err
 	}
 	return inserted, nil

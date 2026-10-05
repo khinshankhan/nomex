@@ -9,14 +9,12 @@ import (
 	"github.com/khinshankhan/nomex/check"
 )
 
-// DefaultMaxAttempts bounds how many times one domain is retried within a
-// single sweep. Beyond this the failure is recorded and the row is deferred,
-// which is a cheaper place to wait than holding a worker.
+// DefaultMaxAttempts bounds retries per domain within one sweep. After that the
+// failure is recorded and the row deferred, which beats holding a worker.
 const DefaultMaxAttempts = 3
 
 // newBackoff builds a jitter strategy. Each worker gets its own, seeded
-// differently: a shared RNG makes every worker retry at the same instant, so
-// the pool arrives at the server as a stampede rather than spread out.
+// differently, so they don't all retry at the same instant.
 func newBackoff(seed int64) jitter.Strategy {
 	r := rand.New(rand.NewSource(time.Now().UnixNano() + seed))
 
@@ -26,21 +24,15 @@ func newBackoff(seed int64) jitter.Strategy {
 		Random: r.Int63n,
 	})
 	if err != nil {
-		// Only reachable with a Base or Cap of zero, both of which are
-		// constants here.
+		// only possible with a zero Base or Cap, which are constants here
 		panic("sweep: " + err.Error())
 	}
 	return s
 }
 
-// checkWithRetry queries a domain, retrying transient failures.
-//
-// Retrying here rather than leaving it to the next sweep matters because the
-// alternative is a full TTL cycle: a domain that hits a momentary 429 would
-// otherwise not be looked at again for hours.
-//
-// Only retryable failures are retried. A malformed name or an unserved suffix
-// will fail identically however many times it is asked.
+// checkWithRetry queries a domain, retrying transient failures. Retrying here
+// matters since otherwise a momentary 429 waits a full backoff cycle. Permanent
+// failures aren't retried, they'd just fail the same way.
 func checkWithRetry(
 	ctx context.Context,
 	checker check.Checker,
@@ -53,8 +45,8 @@ func checkWithRetry(
 
 	for attempt := range maxAttempts {
 		if err := lim.wait(ctx, origin); err != nil {
-			// No token in time. Report it as a retryable failure so the row is
-			// deferred rather than treated as an answer.
+			// no token in time, report a retryable failure so the row gets
+			// deferred instead of treated as an answer
 			return check.Result{
 				Domain:    domain,
 				Status:    check.StatusUnknown,
@@ -73,7 +65,7 @@ func checkWithRetry(
 			break
 		}
 
-		// A server-supplied Retry-After outranks our guess.
+		// a server's Retry-After beats our guess
 		delay := time.Duration(backoff.Next(attempt)) * time.Millisecond
 		if res.RetryAfter > 0 {
 			delay = res.RetryAfter

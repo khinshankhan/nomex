@@ -8,22 +8,18 @@ import (
 )
 
 // OriginResolver reports which RDAP server serves a domain, without querying
-// it.
+// it. This is what lets the sweep skip throttled servers, since
+// rdap.Result.Server is only known after a query.
 //
-// This is what makes per-server throttling possible: rdap.Result.Server is only
-// known after a query, which is too late to decide whether to send one. The
-// IANA bootstrap registry is one file, fetched once -- measured at 128ms for
-// the first lookup and 1-5us after -- so resolving every domain costs nothing.
+// The IANA bootstrap registry is fetched once (128ms for the first lookup,
+// 1-5us after), so resolving every domain is basically free.
 type OriginResolver struct {
 	resolver *bootstrap.Resolver
 }
 
-// NewOriginResolver builds a resolver over the IANA bootstrap registry,
-// cached on disk under os.UserCacheDir()/rdap.
-//
-// Without the cache every invocation refetches the registry from IANA -- about
-// 128ms, and traffic they did not need to serve. The documents are freely
-// refetchable, so losing the cache costs one request.
+// NewOriginResolver builds a resolver over the IANA bootstrap registry, cached
+// on disk under os.UserCacheDir()/rdap so each run doesn't refetch it. Losing
+// the cache just costs one request.
 func NewOriginResolver(opts ...bootstrap.Option) (*OriginResolver, error) {
 	cache, err := bootstrap.NewDiskCache("")
 	if err != nil {
@@ -39,9 +35,9 @@ func NewOriginResolver(opts ...bootstrap.Option) (*OriginResolver, error) {
 
 // Origin returns the scheme://host serving domain.
 //
-// An empty string means no server is published for the suffix -- not an error:
-// the sweeper cannot check the domain, and the query will fail with
-// ErrNoServer, which is one of the three kinds that legitimately blocks it.
+// An empty string means no server is published for the suffix. That isn't an
+// error here, the query itself will fail with ErrNoServer, which blocks the
+// domain.
 func (o *OriginResolver) Origin(ctx context.Context, domain string) (string, error) {
 	match, err := o.resolver.LookupDomain(ctx, domain)
 	if err != nil {

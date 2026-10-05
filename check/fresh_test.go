@@ -41,8 +41,7 @@ func TestFreshUntil(t *testing.T) {
 	}
 }
 
-// The cap is load-bearing: without it a far-future expiry means the domain is
-// never looked at again, and a transfer or deletion goes unnoticed.
+// Without the cap a far off expiry would never get rechecked.
 func TestFreshUntilAlwaysCapped(t *testing.T) {
 	for _, d := range []time.Duration{
 		91 * 24 * time.Hour,
@@ -56,8 +55,7 @@ func TestFreshUntilAlwaysCapped(t *testing.T) {
 	}
 }
 
-// Nothing may return a time in the past, or the row would be immediately due
-// and the sweep would spin on it.
+// Nothing should return a time in the past, or the row stays due forever.
 func TestFreshUntilIsAlwaysFuture(t *testing.T) {
 	offsets := []time.Duration{
 		-10 * 365 * 24 * time.Hour, -76 * 24 * time.Hour, -time.Second,
@@ -78,7 +76,7 @@ func TestFreshUntilIsAlwaysFuture(t *testing.T) {
 }
 
 func TestBackoff(t *testing.T) {
-	// A server-supplied Retry-After is the one number that is not a guess.
+	// a server's Retry-After wins
 	if got, want := Backoff(now, 0, 5*time.Minute), now.Add(5*time.Minute); !got.Equal(want) {
 		t.Errorf("with Retry-After: %v, want %v", got, want)
 	}
@@ -86,7 +84,7 @@ func TestBackoff(t *testing.T) {
 		t.Errorf("Retry-After must win over failure count: %v, want %v", got, want)
 	}
 
-	// Otherwise it doubles, and is capped.
+	// otherwise it doubles, up to the cap
 	var last time.Time
 	for i := range 20 {
 		got := Backoff(now, i, 0)

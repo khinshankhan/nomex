@@ -26,9 +26,9 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 
-	// One writer. SQLite serialises writes regardless, and a pool of them
-	// turns a queued write into SQLITE_BUSY against our own connections.
-	// Reads are unaffected: WAL lets them proceed during a write.
+	// one connection: SQLite serializes writes anyway, and a pool turns a
+	// queued write into SQLITE_BUSY against ourselves (WAL still lets reads
+	// through during a write)
 	sqlDB.SetMaxOpenConns(1)
 
 	if err := sqlDB.PingContext(ctx); err != nil {
@@ -45,35 +45,31 @@ func Open(ctx context.Context, path string) (*DB, error) {
 }
 
 // dsn builds the connection string. modernc.org/sqlite takes pragmas as query
-// parameters, which is the only way to set them for every connection the pool
-// opens rather than just the first.
+// parameters, which is the only way to apply them to every pooled connection.
 func dsn(path string) string {
 	return "file:" + filepath.ToSlash(path) +
-		// Without this the driver writes time.Time in Go's own format --
-		// "2026-08-23 16:31:45.48 +0000 UTC" -- which SQLite's datetime() and
-		// date arithmetic cannot parse. Comparisons against datetime('now')
-		// then fall back to string ordering, which agrees by accident often
-		// enough to hide the bug.
+		// otherwise the driver writes Go's format ("2026-08-23 16:31:45.48
+		// +0000 UTC"), which datetime() can't parse
+		// NOTE: comparisons then fall back to string ordering, which is right
+		// often enough to hide the bug
 		"?_time_format=sqlite" +
-		// Wait rather than returning SQLITE_BUSY the instant a lock is held.
+		// wait on a held lock instead of failing with SQLITE_BUSY right away
 		"&_pragma=busy_timeout(5000)" +
-		// Readers do not block the writer and vice versa. Persistent, but set
-		// here so a fresh database gets it without a migration.
+		// readers and the writer don't block each other, set here so a fresh
+		// database gets it without a migration
 		"&_pragma=journal_mode(WAL)" +
-		// Sync at checkpoints rather than every commit. With WAL this risks
-		// losing the last transactions on power loss, not corruption, and
-		// every row here is re-derivable by checking the domain again.
+		// sync at checkpoints instead of every commit, a power loss can lose
+		// the last few transactions but every row can be rechecked anyway
 		"&_pragma=synchronous(NORMAL)" +
-		// Off by default in SQLite, and required for the references between
-		// attempts/blocked and checks to mean anything.
+		// off by default in SQLite, needed for attempts/blocked to reference
+		// checks
 		"&_pragma=foreign_keys(ON)"
 }
 
-// applyPragmas sets what the DSN cannot and verifies what it claims to.
+// applyPragmas verifies the pragmas the DSN asked for actually took.
 func applyPragmas(ctx context.Context, db *sql.DB) error {
-	// journal_mode is persistent and returns the resulting mode, so this both
-	// applies and confirms it: a database opened read-only, or on a filesystem
-	// without shared-memory support, silently stays in rollback mode.
+	// NOTE: a read only database, or a filesystem without shared memory,
+	// quietly stays in rollback mode, so check what we actually got
 	var mode string
 	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
 		return fmt.Errorf("read journal_mode: %w", err)
@@ -98,10 +94,8 @@ func (db *DB) Close() error {
 	return db.sql.Close()
 }
 
-// Exec runs a statement outside the generated query set.
-//
-// For DDL and maintenance -- applying a schema in tests, VACUUM, ANALYZE.
-// Everything with a shape belongs in queries/ so it is typed and checked.
+// Exec runs a statement outside the generated queries. It's meant for DDL and
+// maintenance (test schemas, VACUUM, ANALYZE); real queries belong in queries/.
 func (db *DB) Exec(ctx context.Context, stmt string, args ...any) error {
 	_, err := db.sql.ExecContext(ctx, stmt, args...)
 	return err
@@ -109,8 +103,8 @@ func (db *DB) Exec(ctx context.Context, stmt string, args ...any) error {
 
 // Tx runs fn in a transaction, rolling back if it returns an error.
 //
-// The Queries handed to fn is bound to the transaction; the receiver's own
-// Queries is not, so writing through db inside fn escapes the transaction.
+// NOTE: only the Queries passed to fn is bound to the transaction. Writing
+// through db inside fn goes around it.
 func (db *DB) Tx(ctx context.Context, fn func(*sqlcgen.Queries) error) error {
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {

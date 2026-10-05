@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-// mustCount fails the test rather than returning an error, so assertions stay
-// readable.
+// mustCount fails the test instead of returning an error.
 func mustCount(t *testing.T, s Spec) int64 {
 	t.Helper()
 	n, err := s.Count()
@@ -36,8 +35,7 @@ func TestSpecCount(t *testing.T) {
 				t.Errorf("Count() = %d, want %d", got, tt.want)
 			}
 
-			// Count is used to size a run before committing to it, so it has
-			// to agree with what All actually produces.
+			// Count sizes a run up front, so it has to match All
 			var n int64
 			for range tt.spec.All() {
 				n++
@@ -60,7 +58,7 @@ func TestSpecAllOrder(t *testing.T) {
 	}
 }
 
-// Shortest first, so an interrupted seed has covered the scarce labels.
+// Shortest first, so an interrupted seed already covered the short labels.
 func TestSpecAllShortestFirst(t *testing.T) {
 	spec := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 3}
 
@@ -74,8 +72,7 @@ func TestSpecAllShortestFirst(t *testing.T) {
 	}
 }
 
-// The sequence must be identical run to run, or a resumed seed would generate
-// different candidates and OR IGNORE would not line up.
+// The sequence has to be the same every run so a resumed seed lines up.
 func TestSpecAllDeterministic(t *testing.T) {
 	spec := Spec{TLDs: []string{"dev", "net"}, MinLen: 1, MaxLen: 2, Alphabet: "abc"}
 
@@ -99,8 +96,8 @@ func TestSpecAllStopsEarly(t *testing.T) {
 	}
 }
 
-// Count must refuse to report a total it cannot represent: it silently went
-// negative at 15 characters before the limit was added, and the CLI prints it.
+// Count should refuse totals it can't represent. It used to go negative at 15
+// characters and the CLI printed it.
 func TestCountRejectsOversizedSpace(t *testing.T) {
 	for _, n := range []int{15, 20, 63} {
 		spec := Spec{TLDs: []string{"dev"}, MinLen: n, MaxLen: n}

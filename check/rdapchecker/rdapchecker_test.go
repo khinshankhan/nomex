@@ -9,9 +9,9 @@ import (
 	"github.com/khinshankhan/rdap"
 )
 
-// Only errors that describe the DOMAIN may block it. Gating on
-// !rdap.IsRetryable(err) instead would block on four kinds that describe a
-// server or our own configuration, which is November's bug in a subtler form.
+// Only errors about the domain itself can block it. Using !rdap.IsRetryable(err)
+// instead would block on server and config errors too, a quieter version of
+// the November bug.
 func TestBlockableIsAnAllowlist(t *testing.T) {
 	tests := []struct {
 		kind      rdap.ErrorKind
@@ -21,14 +21,14 @@ func TestBlockableIsAnAllowlist(t *testing.T) {
 		{rdap.ErrInvalidQuery, true},
 		{rdap.ErrRefused, true},
 
-		// Non-retryable, but not facts about the domain.
+		// not retryable, but not about the domain either
 		{rdap.ErrUnknown, false},
 		{rdap.ErrTooManyRedirects, false},
 		{rdap.ErrRedirectRefused, false},
 		{rdap.ErrRedirectLoop, false},
 		{rdap.ErrNotSupported, false},
 
-		// Retryable.
+		// retryable
 		{rdap.ErrTimeout, false},
 		{rdap.ErrRateLimited, false},
 		{rdap.ErrServerFailure, false},
@@ -38,8 +38,8 @@ func TestBlockableIsAnAllowlist(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.kind.String(), func(t *testing.T) {
-			// Through classify rather than reading the map: a test that only
-			// inspects the table passes even when Check ignores it.
+			// go through classify, checking the map alone would pass even if
+			// Check ignored it
 			got := classify(check.Result{}, rdap.Result{
 				Err:       &rdap.Error{Kind: tt.kind},
 				Retryable: rdap.IsRetryable(&rdap.Error{Kind: tt.kind}),
@@ -56,8 +56,8 @@ func TestBlockableIsAnAllowlist(t *testing.T) {
 	}
 }
 
-// Every retryable kind must be absent from the allowlist, whatever the library
-// adds later.
+// No retryable kind should ever be in the allowlist, even if the library adds
+// more later.
 func TestRetryableIsNeverBlockable(t *testing.T) {
 	for kind := range blockable {
 		err := &rdap.Error{Kind: kind}
@@ -75,7 +75,7 @@ func TestParseEvents(t *testing.T) {
 		wantReg string
 	}{
 		{
-			// Verisign: whole seconds.
+			// Verisign sends whole seconds
 			name: "second precision",
 			body: `{"events":[
 				{"eventAction":"registration","eventDate":"1995-08-14T04:00:00Z"},
@@ -83,14 +83,14 @@ func TestParseEvents(t *testing.T) {
 			wantReg: "1995-08-14", wantExp: "2027-08-13",
 		},
 		{
-			// Google's registry: milliseconds.
+			// Google sends milliseconds
 			name: "millisecond precision",
 			body: `{"events":[
 				{"eventAction":"expiration","eventDate":"2027-07-02T03:23:42.407Z"}]}`,
 			wantExp: "2027-07-02",
 		},
 		{
-			// Describes the freshness of the answer, not the domain.
+			// about the answer's freshness, not the domain
 			name: "last update of rdap database is ignored",
 			body: `{"events":[
 				{"eventAction":"last update of RDAP database","eventDate":"2026-08-23T15:05:42Z"}]}`,
@@ -129,8 +129,8 @@ func TestParseEventsRejectsGarbage(t *testing.T) {
 
 func TestOriginOf(t *testing.T) {
 	tests := []struct{ in, want string }{
-		// The whole point: Result.Server carries the object path, so using it
-		// as a server identity would give one entry per domain.
+		// Result.Server has the object path, using it as is would give one
+		// entry per domain
 		{"https://rdap.verisign.com/com/v1/domain/example.com", "https://rdap.verisign.com"},
 		{"https://pubapi.registry.google/rdap/domain/uptogood.dev", "https://pubapi.registry.google"},
 		{"https://rdap.example:8443/domain/x.dev", "https://rdap.example:8443"},

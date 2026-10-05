@@ -9,15 +9,15 @@ import (
 
 // UserAgentOptions carries what the build identity cannot supply on its own.
 type UserAgentOptions struct {
-	// Name is the product token, e.g. "name". Defaults to info.Name.
+	// Name is the product token, eg "nomex". Defaults to info.Name.
 	Name string
 
-	// URL is a contact address. The only field a registry operator can act
-	// on, so worth setting even when everything else is unknown.
+	// URL is a contact address. It's the one field a registry operator can
+	// act on.
 	URL string
 
-	// Extra carries key=value pairs, e.g. service="rdap". Sorted, so the
-	// header is stable across runs.
+	// Extra carries key=value pairs, eg service="rdap". Sorted so the header
+	// is stable across runs.
 	Extra map[string]string
 }
 
@@ -30,7 +30,7 @@ func UserAgent(info *VersionInfo, opts UserAgentOptions) string {
 	name := token(opts.Name, info.Module)
 	ver := token(info.Version, "unknown")
 	if info.Dirty {
-		// So a dev build is not mistaken for a release in someone's logs.
+		// so a dev build isn't mistaken for a release
 		ver += "-dirty"
 	}
 
@@ -61,8 +61,9 @@ func UserAgent(info *VersionInfo, opts UserAgentOptions) string {
 	return sb.String()
 }
 
-// token scrubs s to RFC 9110 token characters, def when empty. Product and
-// version only -- too aggressive for the comment, where "/" and ":" are legal.
+// token scrubs s to RFC 9110 token characters, def when empty. Only for
+// product and version, it's too strict for the comment where "/" and ":" are
+// fine.
 func token(s, def string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -82,7 +83,7 @@ func token(s, def string) string {
 }
 
 // comment scrubs s for the parenthesized comment. RFC 9110 allows anything
-// there but parens and backslashes. Narrower than token so a URL survives.
+// there but parens and backslashes, so a URL survives.
 func comment(s string) string {
 	s = strings.TrimSpace(s)
 
@@ -91,7 +92,7 @@ func comment(s string) string {
 		case r == '(', r == ')', r == '\\':
 			return '-'
 		case r < 0x20 || r == 0x7f:
-			// Control chars, incl. the CR/LF that would split the header.
+			// control chars, including CR/LF which would split the header
 			return -1
 		default:
 			return r

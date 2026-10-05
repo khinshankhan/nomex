@@ -13,9 +13,9 @@ import (
 	"time"
 )
 
-// fullWriter implements every optional interface, so a test can tell the
-// difference between "the wrapper dropped it" and "the writer never had it".
-// httptest.ResponseRecorder is only a Flusher.
+// fullWriter implements every optional interface, so tests can tell "the
+// wrapper dropped it" from "the writer never had it" (httptest.ResponseRecorder
+// is only a Flusher).
 type fullWriter struct {
 	*httptest.ResponseRecorder
 	hijacked    bool
@@ -40,8 +40,7 @@ func (w *fullWriter) ReadFrom(r io.Reader) (int64, error) {
 }
 
 // SetWriteDeadline is what http.ResponseController looks for after following
-// Unwrap. Without it the controller reports ErrNotSupported no matter how well
-// the wrapper behaves, so the test could not tell the two apart.
+// Unwrap, without it the controller reports ErrNotSupported regardless.
 func (w *fullWriter) SetWriteDeadline(time.Time) error {
 	w.deadlineSet = true
 	return nil
@@ -51,8 +50,8 @@ func newFullWriter() *fullWriter {
 	return &fullWriter{ResponseRecorder: httptest.NewRecorder()}
 }
 
-// Both wrappers must preserve the optional interfaces; a plain embedded
-// http.ResponseWriter silently drops them.
+// Both wrappers should keep the optional interfaces, which a plain embedded
+// http.ResponseWriter drops.
 func TestWrappersPreserveCapabilities(t *testing.T) {
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
@@ -77,12 +76,12 @@ func TestWrappersPreserveCapabilities(t *testing.T) {
 				_, gotPusher = w.(http.Pusher)
 				_, gotReaderFrom = w.(io.ReaderFrom)
 
-				// The real test of Unwrap: ResponseController walks it.
+				// ResponseController walks Unwrap, so this is the real test
 				ctrlErr = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 			})
 
-			// BlackHole only wraps when next is a *ServeMux with no route, so
-			// it is given one; Recover wraps unconditionally.
+			// BlackHole only wraps when next is a *ServeMux with no route,
+			// Recover always wraps
 			var h http.Handler = inner
 			if name == "BlackHole" {
 				m := http.NewServeMux()
@@ -109,7 +108,7 @@ func TestWrappersPreserveCapabilities(t *testing.T) {
 	_ = mux
 }
 
-// Forwarding must reach the underlying writer, not just type-assert cleanly.
+// Forwarding should reach the underlying writer, not just type assert.
 func TestWrapperForwards(t *testing.T) {
 	fw := newFullWriter()
 	w := &wrapper{ResponseWriter: fw}
@@ -131,9 +130,9 @@ func TestWrapperForwards(t *testing.T) {
 	}
 }
 
-// A writer lacking a capability must report it rather than panic.
+// A writer missing a capability should report it instead of panicking.
 func TestWrapperReportsUnsupported(t *testing.T) {
-	// A bare writer: Header/Write/WriteHeader only.
+	// bare writer, only Header/Write/WriteHeader
 	w := &wrapper{ResponseWriter: bareWriter{httptest.NewRecorder()}}
 
 	if _, _, err := w.Hijack(); err == nil {
@@ -155,8 +154,8 @@ func (b bareWriter) Header() http.Header         { return b.rec.Header() }
 func (b bareWriter) Write(p []byte) (int, error) { return b.rec.Write(p) }
 func (b bareWriter) WriteHeader(code int)        { b.rec.WriteHeader(code) }
 
-// Flush and ReadFrom start the response without going through Write, so a
-// later panic must not try to rewrite the status.
+// Flush and ReadFrom start the response without Write, so a later panic
+// shouldn't try to rewrite the status.
 func TestRecoverAfterFlushAndReadFrom(t *testing.T) {
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)

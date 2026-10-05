@@ -51,9 +51,9 @@ func Version(name string) *VersionInfo {
 	return &info
 }
 
-// String reports the module path and best available version from
-// embedded build info: VCS revision for source builds, module version for
-// proxy installs, "unknown" when neither exists (e.g. tarball builds).
+// String reports the module path and best available version from embedded
+// build info: VCS revision for source builds, module version for proxy
+// installs, "unknown" when neither exists (eg tarball builds).
 func (info *VersionInfo) String() string {
 	version := info.Version
 	if info.Commit != "" {

@@ -14,12 +14,9 @@ import (
 	"github.com/khinshankhan/nomex/platform/config"
 )
 
-// runGather seeds candidate domains into the database.
-//
-// Re-running over a space that overlaps an earlier run is cheap and lossless:
-// existing rows keep their status and priority, so the usual workflow is to
-// widen gradually -- two characters, then three -- rather than committing to
-// the whole space up front.
+// runGather seeds candidate domains into the database. Existing rows keep their
+// status and priority, so it's fine to widen gradually (two characters, then
+// three).
 func runGather(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("gather", flag.ContinueOnError)
 	dbPath := flags.String("db", config.DB(), "path to the database")
@@ -36,8 +33,8 @@ func runGather(ctx context.Context, args []string) error {
 	flags.Usage = func() {
 		fmt.Fprint(os.Stderr, `usage: nomex gather [flags]
 
-Seeds candidate domains. Existing rows are left untouched, so widening a
-space re-walks the earlier candidates without resetting them.
+Seeds candidate domains. Existing rows are left alone, so widening a space
+doesn't reset anything.
 
   nomex gather -tlds dev -max 2
   nomex gather -tlds dev -max 3          # adds only the 3-character labels
@@ -75,17 +72,14 @@ flags:
 		strings.Join(spec.TLDs, ","), commas(total), spec.MinLen, spec.MaxLen, len(spec.TLDs))
 
 	if *dryRun {
-		// Seeding measured ~57k rows/sec; checking is bounded by registry rate
-		// limits, so the two estimates differ by orders of magnitude and the
-		// second one is the one that matters.
+		// seeding measured ~57k rows/sec, checking is what actually takes time
 		fmt.Fprintf(os.Stderr, "  seeding:  about %v\n", estimate(total, 57_000))
 		fmt.Fprintf(os.Stderr, "  checking: about %v at 3 queries/sec\n", estimate(total, 3))
 		return nil
 	}
 
-	// A large run writes for minutes and gigabytes. Ask first unless told not
-	// to, since the flags make it easy to add a character without noticing the
-	// space grew 26-fold.
+	// a big run writes for minutes and gigabytes, and one more character is
+	// 26x, so ask first unless -y
 	if total >= confirmThreshold && !*force {
 		if !confirm(fmt.Sprintf("seed %s candidates (about %s on disk)?", commas(total), diskEstimate(total))) {
 			return fmt.Errorf("cancelled")
@@ -103,7 +97,7 @@ flags:
 		Priority: *priority,
 		Batch:    *batch,
 		Progress: func(p gather.Progress) {
-			// Throttled: one line a second, not one per batch.
+			// one line a second, not one per batch
 			if time.Since(lastReport) < time.Second && p.Seen < p.Total {
 				return
 			}
@@ -115,7 +109,7 @@ flags:
 	fmt.Fprintln(os.Stderr)
 
 	if err != nil {
-		// A cancelled run has still committed everything up to the last batch.
+		// a cancelled run still committed everything up to the last batch
 		return fmt.Errorf("seeded %s rows before stopping: %w", commas(inserted), err)
 	}
 
@@ -124,8 +118,7 @@ flags:
 	return nil
 }
 
-// gatherNames seeds a chosen list rather than a generated space, so the sweep
-// works through names someone actually wants.
+// gatherNames seeds a chosen list instead of a generated space.
 func gatherNames(ctx context.Context, dbPath, from string, tlds []string, priority int64, dryRun bool) error {
 	in := os.Stdin
 	if from != "-" {
@@ -167,13 +160,12 @@ func gatherNames(ctx context.Context, dbPath, from string, tlds []string, priori
 	return nil
 }
 
-// confirmThreshold is where a run stops being obviously cheap. Below it,
-// seeding finishes in seconds and costs a few hundred megabytes.
+// confirmThreshold is where a run stops being cheap. Below it seeding takes
+// seconds and a few hundred megabytes.
 const confirmThreshold = 1_000_000
 
 // confirm asks on stderr and reads a line from stdin. A non-interactive stdin
-// reads EOF, which answers no -- so a scripted run needs -y and cannot be
-// silently blocked waiting for input.
+// reads EOF, which counts as no, so scripts need -y.
 func confirm(question string) bool {
 	fmt.Fprintf(os.Stderr, "%s [y/N] ", question)
 
@@ -190,7 +182,7 @@ func confirm(question string) bool {
 }
 
 // diskEstimate reports the approximate database size for n rows, from a
-// measured 177 bytes/row including both indexes.
+// measured 177 bytes/row including indexes.
 func diskEstimate(n int64) string {
 	const bytesPerRow = 177
 	b := float64(n) * bytesPerRow
@@ -221,8 +213,7 @@ func estimate(rows, perSecond int64) time.Duration {
 	return (time.Duration(rows/perSecond) * time.Second).Round(time.Second)
 }
 
-// commas formats n with thousands separators, because the difference between
-// 1.4M and 37M candidates is the whole decision and is easy to misread.
+// commas formats n with thousands separators, 1.4M and 37M are easy to misread.
 func commas(n int64) string {
 	s := fmt.Sprintf("%d", n)
 	if n < 0 {

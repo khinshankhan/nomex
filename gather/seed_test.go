@@ -51,14 +51,12 @@ func count(t *testing.T, db *data.DB) int64 {
 	return n
 }
 
-// Widening a space must add only the new candidates.
+// Widening a space should only add the new candidates.
 func TestSeedIsIncremental(t *testing.T) {
 	db := openDB(t)
 	ctx := context.Background()
 
-	// A small alphabet keeps this in the hundreds of rows: the property under
-	// test is that widening adds only new candidates, which does not need the
-	// full 26-letter space to demonstrate.
+	// small alphabet keeps this to a few hundred rows
 	two := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 2, Alphabet: "abcdefgh"}
 	three := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 3, Alphabet: "abcdefgh"}
 
@@ -91,8 +89,7 @@ func TestSeedIsIncremental(t *testing.T) {
 	}
 }
 
-// A row that has been checked must survive re-seeding untouched, or widening a
-// space would silently discard results.
+// A checked row should survive re-seeding untouched.
 func TestSeedPreservesExistingRows(t *testing.T) {
 	db := openDB(t)
 	ctx := context.Background()
@@ -131,7 +128,7 @@ func TestSeedPreservesExistingRows(t *testing.T) {
 	}
 }
 
-// Seeded rows must be immediately due, or the sweep would never pick them up.
+// Seeded rows should be due right away so the sweep picks them up.
 func TestSeedRowsAreDue(t *testing.T) {
 	db := openDB(t)
 	ctx := context.Background()
@@ -150,7 +147,7 @@ func TestSeedRowsAreDue(t *testing.T) {
 	}
 }
 
-// Cancellation keeps what was committed, so the next run resumes cheaply.
+// Cancelling keeps what was committed, so the next run resumes.
 func TestSeedCancellationKeepsProgress(t *testing.T) {
 	db := openDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -178,7 +175,7 @@ func TestSeedCancellationKeepsProgress(t *testing.T) {
 		t.Error("cancellation discarded every batch")
 	}
 
-	// A fresh run finishes the job.
+	// a fresh run finishes the job
 	n, err := Seed(context.Background(), db, spec, SeedOptions{Batch: 100})
 	if err != nil {
 		t.Fatalf("resumed seed: %v", err)

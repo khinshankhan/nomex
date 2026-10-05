@@ -12,16 +12,12 @@ import (
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
-// Names turns chosen names into domains.
+// Names turns chosen names into domains. A bare label ("matterwave") is joined
+// to each TLD, and a name with a suffix ("matterwave.dev") is taken as is.
+// Input is lowercased and deduplicated, keeping input order.
 //
-// A bare label ("matterwave") is joined to each TLD; a name that already has a
-// suffix ("matterwave.dev") is taken as written. Input is lowercased, and
-// duplicates are dropped keeping the first occurrence, so output order follows
-// input order.
-//
-// Every label is validated here rather than left to the registry. A malformed
-// name fails RDAP as ErrInvalidQuery, which is an allowlisted reason to write
-// to blocked, so a typo would otherwise be blocklisted permanently.
+// NOTE: labels are validated here since a malformed name fails RDAP as
+// ErrInvalidQuery, which would block it permanently.
 func Names(names []string, tlds []string) ([]string, error) {
 	for _, tld := range tlds {
 		if err := validLabel(tld); err != nil {
@@ -64,8 +60,7 @@ func Names(names []string, tlds []string) ([]string, error) {
 	return out, nil
 }
 
-// ReadNames reads one name per line, skipping blank lines and # comments, so a
-// word list can be kept annotated.
+// ReadNames reads one name per line, skipping blank lines and # comments.
 func ReadNames(r io.Reader) ([]string, error) {
 	var out []string
 
@@ -82,10 +77,9 @@ func ReadNames(r io.Reader) ([]string, error) {
 	return out, nil
 }
 
-// SeedDomains writes the given domains that are not already present, due
-// immediately. Existing rows are left alone, as with Seed.
-//
-// Returns the number of rows actually inserted.
+// SeedDomains writes the given domains that aren't already present, due
+// immediately, and returns how many were inserted. Existing rows are left
+// alone, same as Seed.
 func SeedDomains(ctx context.Context, db *data.DB, domains []string, priority int64) (int64, error) {
 	due := sqltime.At(time.Now().Add(-time.Minute))
 
@@ -118,8 +112,7 @@ func validLabel(label string) error {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
 		default:
-			// Internationalized names would need punycode first; refusing is
-			// safer than sending something the registry will reject.
+			// TODO: internationalized names would need punycode first
 			return fmt.Errorf("label %q contains %q: only a-z, 0-9 and '-' are allowed", label, r)
 		}
 	}

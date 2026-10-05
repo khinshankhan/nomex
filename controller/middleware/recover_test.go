@@ -41,8 +41,8 @@ func TestRecover(t *testing.T) {
 	})
 
 	t.Run("status is not rewritten after a partial write", func(t *testing.T) {
-		// Once 200 and part of a body are on the wire the status cannot be
-		// taken back; the response is truncated instead.
+		// once a 200 and some body are sent the status can't change, so the
+		// response just gets cut off
 		h := Recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("partial"))
 			panic("boom")

@@ -6,18 +6,17 @@ import (
 	"time"
 )
 
-// The whole point of keying on origin: one registry's budget must not be spent
-// by another's traffic.
+// One registry's traffic shouldn't spend another's budget.
 func TestLimitersAreIndependentPerOrigin(t *testing.T) {
 	lims := newLimiters(Limits{Every: time.Hour, Burst: 1})
 	ctx := context.Background()
 
-	// Spend google's single token.
+	// spend google's single token
 	if err := lims.wait(ctx, "https://pubapi.registry.google"); err != nil {
 		t.Fatalf("first google token: %v", err)
 	}
 
-	// Verisign must still have its own, immediately.
+	// verisign should still have its own right away
 	start := time.Now()
 	if err := lims.wait(ctx, "https://rdap.verisign.com"); err != nil {
 		t.Fatalf("verisign token: %v", err)
@@ -44,7 +43,7 @@ func TestLimiterRefills(t *testing.T) {
 	}
 }
 
-// Burst is what lets a sweep start promptly instead of trickling from cold.
+// Burst lets a sweep start quickly instead of trickling.
 func TestLimiterAllowsBurst(t *testing.T) {
 	lims := newLimiters(Limits{Every: time.Hour, Burst: 3})
 	ctx := context.Background()
@@ -60,8 +59,7 @@ func TestLimiterAllowsBurst(t *testing.T) {
 	}
 }
 
-// Reserve rather than Wait: a query that could not finish before the deadline
-// is abandoned instead of queued behind a token it will never use.
+// A query that can't finish before the deadline should be dropped, not queued.
 func TestLimiterRespectsDeadline(t *testing.T) {
 	lims := newLimiters(Limits{Every: time.Hour, Burst: 1})
 
@@ -77,7 +75,7 @@ func TestLimiterRespectsDeadline(t *testing.T) {
 	if err == nil {
 		t.Fatal("waiting past the deadline returned nil")
 	}
-	// It must give up immediately rather than sleeping to the deadline.
+	// should give up right away instead of sleeping to the deadline
 	if waited := time.Since(start); waited > 15*time.Millisecond {
 		t.Errorf("gave up after %v; expected an immediate refusal", waited)
 	}
@@ -100,13 +98,13 @@ func TestLimiterCancellation(t *testing.T) {
 	}
 }
 
-// A measured registry gets its own budget rather than the conservative
-// default, which is the difference between 1/sec and 10/sec on Verisign.
+// A measured registry gets its own budget instead of the default, 10/sec vs
+// 1/sec on Verisign.
 func TestMeasuredLimitsApply(t *testing.T) {
 	lims := newLimiters(DefaultLimits)
 	ctx := context.Background()
 
-	// Verisign is measured at 10/sec, so ten back-to-back must be fast.
+	// verisign is measured at 10/sec, so ten in a row should be fast
 	start := time.Now()
 	for range 10 {
 		if err := lims.wait(ctx, "https://rdap.verisign.com"); err != nil {
@@ -115,7 +113,7 @@ func TestMeasuredLimitsApply(t *testing.T) {
 	}
 	verisign := time.Since(start)
 
-	// An unmeasured origin falls back to 1/sec: three burst tokens, then wait.
+	// unmeasured falls back to 1/sec, three burst tokens then wait
 	start = time.Now()
 	for range 5 {
 		if err := lims.wait(ctx, "https://rdap.unknown.example"); err != nil {
@@ -129,7 +127,7 @@ func TestMeasuredLimitsApply(t *testing.T) {
 	}
 }
 
-// An explicit -rate must win: a measurement taken elsewhere may not hold here.
+// An explicit -rate should win over a measured budget.
 func TestExplicitLimitsOverrideMeasured(t *testing.T) {
 	lims := newLimiters(Limits{Every: time.Hour, Burst: 1})
 	ctx := context.Background()

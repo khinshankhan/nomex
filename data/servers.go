@@ -12,10 +12,8 @@ import (
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
-// Throttled reports which origins asked us to wait, and until when.
-//
-// The sweeper reads this once per round rather than per domain: it is a handful
-// of rows, and a stale answer only costs one wasted query.
+// Throttled reports which origins asked us to wait, and until when. The sweep
+// reads it once per round since a stale answer only costs one wasted query.
 func (db *DB) Throttled(ctx context.Context) (map[string]time.Time, error) {
 	rows, err := db.ThrottledServers(ctx)
 	if err != nil {
@@ -31,17 +29,15 @@ func (db *DB) Throttled(ctx context.Context) (map[string]time.Time, error) {
 	return out, nil
 }
 
-// RecordServer updates per-origin state from one result.
+// RecordServer updates per-origin state from one result, and returns when the
+// origin should next be tried (zero if it isn't throttled).
 //
-// A rate limit is a property of the server, not of the domain that happened to
-// hit it: when Verisign says Retry-After: 300 that applies to every .com
-// lookup. Without somewhere to put that, the knowledge dies with the worker
-// that received it and the rest of the pool keeps hammering.
-// Returns when the origin should next be tried, or the zero time if it is not
-// throttled.
+// A rate limit belongs to the server, not the domain that hit it. A
+// Retry-After from Verisign applies to every .com lookup, so it's stored here
+// where the whole pool can see it.
 func (db *DB) RecordServer(ctx context.Context, res check.Result) (time.Time, error) {
 	if res.Origin == "" {
-		// Nothing answered, so there is no server to attribute this to.
+		// nothing answered, so there is no server to blame
 		return time.Time{}, nil
 	}
 
@@ -54,10 +50,8 @@ func (db *DB) RecordServer(ctx context.Context, res check.Result) (time.Time, er
 		})
 	}
 
-	// A server that rate-limits without a Retry-After is the common case --
-	// Google's registry sends a bare 429 -- so a wait has to be derived from
-	// the failure streak, or nothing ever throttles and the pool keeps
-	// hammering a server that has already said no.
+	// most rate limits come without a Retry-After (Google sends a bare 429),
+	// so derive a wait from the failure streak
 	wait := res.RetryAfter
 	if wait <= 0 && throttling(res) {
 		wait = check.Backoff(time.Now(), db.ServerFailures(ctx, res.Origin), 0).Sub(time.Now())
@@ -80,12 +74,9 @@ func (db *DB) RecordServer(ctx context.Context, res check.Result) (time.Time, er
 	})
 }
 
-// throttling reports whether a failure means "stop asking this server for a
-// while" rather than "this one domain went wrong".
-//
-// Retryable covers it: rate limits, timeouts, transport failures and 5xx are
-// all properties of the server. A permanent failure -- a malformed name, an
-// unserved suffix -- says nothing about whether the server is healthy.
+// throttling reports whether a failure means "back off this server" as opposed
+// to "this one domain went wrong". Retryable failures (rate limits, timeouts,
+// transport errors, 5xx) are about the server, permanent ones are not.
 func throttling(res check.Result) bool {
 	return res.Retryable
 }

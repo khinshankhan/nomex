@@ -54,7 +54,7 @@ func TestReadNamesSkipsBlanksAndComments(t *testing.T) {
 	}
 }
 
-// Seeding a chosen list must leave already-checked rows alone, as Seed does.
+// Seeding a chosen list should leave existing rows alone, same as Seed.
 func TestSeedDomainsIsIncremental(t *testing.T) {
 	db := openDB(t)
 	ctx := t.Context()

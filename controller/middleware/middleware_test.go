@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// tag records entry and exit around next, so the assertion covers nesting
-// order rather than merely which middleware ran.
+// tag records entry and exit around next, so the test checks nesting order and
+// not just which middleware ran.
 func tag(log *[]string, name string) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,14 +29,14 @@ func TestChainOrder(t *testing.T) {
 	)
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
 
-	// First listed is outermost: it is entered first and exited last.
+	// first listed is outermost, entered first and exited last
 	want := "->a ->b ->c handler <-c <-b <-a"
 	if got := strings.Join(log, " "); got != want {
 		t.Errorf("order = %q, want %q", got, want)
 	}
 }
 
-// The reason Chain returns a Middleware: a chain has to be reusable as a unit.
+// Chains should be reusable as a unit.
 func TestChainComposes(t *testing.T) {
 	var log []string
 
@@ -67,8 +67,7 @@ func TestChainEmpty(t *testing.T) {
 	}
 }
 
-// Wrapping must happen when the chain is applied, not per request, so the
-// handler a request traverses is built exactly once.
+// Wrapping should happen once when the chain is applied, not per request.
 func TestChainWrapsOnce(t *testing.T) {
 	wraps := 0
 	counting := func(next http.Handler) http.Handler {

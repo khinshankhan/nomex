@@ -1,7 +1,7 @@
 // Package rdapchecker checks domains against RDAP (RFC 7480, 9082, 9083).
 //
-// A thin adapter over github.com/khinshankhan/rdap: query, map the result,
-// read two event dates. The protocol itself lives in that library.
+// It's a thin adapter over github.com/khinshankhan/rdap, which does the actual
+// protocol work.
 package rdapchecker
 
 import (
@@ -16,14 +16,14 @@ import (
 	"github.com/khinshankhan/rdap/bootstrap"
 )
 
-// blockable is the allowlist of error kinds that describe the DOMAIN rather
-// than a server or our own configuration.
+// blockable lists the error kinds that are about the domain itself, not a
+// server or our config.
 //
-// Deliberately not !rdap.IsRetryable(err): Retryable() is a five-kind
-// allowlist, so "not retryable" also covers ErrUnknown (an unclassified
-// failure), ErrTooManyRedirects, ErrRedirectRefused, ErrRedirectLoop and
-// ErrNotSupported. Blocking on those would write a domain off permanently
-// because of a redirect loop on someone else's server.
+// NOTE: this is not !rdap.IsRetryable(err). Retryable only allows five kinds,
+// so "not retryable" also covers ErrUnknown, ErrTooManyRedirects,
+// ErrRedirectRefused, ErrRedirectLoop and ErrNotSupported. Blocking on those
+// would write a domain off for good over a redirect loop on someone else's
+// server.
 var blockable = map[rdap.ErrorKind]string{
 	rdap.ErrNoServer:     "no RDAP server published for this suffix",
 	rdap.ErrInvalidQuery: "malformed domain name",
@@ -35,12 +35,11 @@ type Checker struct {
 	client *rdap.Client
 }
 
-// NewChecker returns a Checker using the given user agent, which the library
-// requires: registries rate-limit or block anonymous clients, and an operator
-// who wants to complain should be able to find us.
+// New returns a Checker using the given user agent. The library requires one
+// since registries rate limit or block anonymous clients, and an operator
+// should be able to reach whoever is querying them.
 func New(userAgent string, opts ...rdap.ClientOption) (*Checker, error) {
-	// A disk-cached resolver, so repeated invocations do not refetch the IANA
-	// registry. Without it every process start costs a round trip to IANA.
+	// disk cached so each run doesn't refetch the IANA registry
 	cache, err := bootstrap.NewDiskCache("")
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap cache: %w", err)
@@ -66,10 +65,8 @@ func (c *Checker) Source() string {
 	return "rdap"
 }
 
-// Check asks the registry about one domain.
-//
-// A failure is reported in Result.Err rather than as a status, so the caller
-// cannot accidentally store "we could not find out" as "the answer is no".
+// Check asks the registry about one domain. Failures go in Result.Err, never in
+// the status.
 func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 	res, err := c.client.QueryDomain(ctx, domain)
 
@@ -94,8 +91,7 @@ func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 
 	default:
 		out.Status = check.StatusRegistered
-		// A body that will not parse is not a reason to discard the status:
-		// the registry answered, we just could not read the dates.
+		// the registry still answered, we just couldn't read the dates
 		if events, err := parseEvents(res.Body); err == nil {
 			out.Expiration = events.expiration
 			out.Registered = events.registration
@@ -104,16 +100,15 @@ func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 	}
 }
 
-// classify turns a failed query into a Result, deciding whether the failure is
-// a fact about the domain.
+// classify turns a failed query into a Result and decides whether the failure
+// is about the domain.
 func classify(out check.Result, res rdap.Result) check.Result {
 	out.Status = check.StatusUnknown
 	out.Err = res.Err
 	out.Retryable = res.Retryable
 	out.RetryAfter = res.RetryAfter
 
-	// ok is false when the error is not an *rdap.Error at all -- a cancelled
-	// context, say -- which is never a fact about the domain.
+	// not an *rdap.Error at all (eg a cancelled context), never about the domain
 	kind, ok := rdap.KindOf(out.Err)
 	if !ok {
 		out.ErrKind = "non-rdap failure"
@@ -133,9 +128,8 @@ type events struct {
 
 // parseEvents reads the event array out of an RDAP domain object.
 //
-// "last update of RDAP database" is deliberately ignored: it describes the
-// freshness of the answer, not the domain, and is easy to mistake for the
-// latter.
+// NOTE: "last update of RDAP database" is skipped. It's about the answer's
+// freshness, not the domain, and easy to mix up.
 func parseEvents(body []byte) (events, error) {
 	var doc struct {
 		Events []struct {
@@ -149,8 +143,8 @@ func parseEvents(body []byte) (events, error) {
 
 	var out events
 	for _, e := range doc.Events {
-		// Registries differ on precision -- Verisign sends whole seconds,
-		// Google's registry sends milliseconds -- and RFC 3339 covers both.
+		// Verisign sends whole seconds and Google sends milliseconds, RFC 3339
+		// covers both
 		t, err := time.Parse(time.RFC3339, e.Date)
 		if err != nil {
 			continue
@@ -167,10 +161,9 @@ func parseEvents(body []byte) (events, error) {
 	return out, nil
 }
 
-// originOf reduces a full request URL to scheme://host.
-//
-// rdap.Result.Server is the whole URL including the object path, so using it
-// directly as a server identity would produce one entry per domain.
+// originOf reduces a full request URL to scheme://host. rdap.Result.Server
+// includes the object path, so using it directly would give one entry per
+// domain.
 func originOf(raw string) string {
 	if raw == "" {
 		return ""
@@ -182,6 +175,5 @@ func originOf(raw string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-// Compile-time proof that Checker satisfies the interface, so a signature
-// change in check.Checker breaks here rather than at the call site.
+// Checker satisfies check.Checker.
 var _ check.Checker = (*Checker)(nil)

@@ -61,7 +61,7 @@ func TestStoreAnswer(t *testing.T) {
 	}
 }
 
-// The central rule: a failure must never become a status in checks.
+// A failure should never become a status in checks.
 func TestStoreFailureNeverBecomesAnAnswer(t *testing.T) {
 	db := openTest(t)
 	ctx := context.Background()
@@ -109,8 +109,7 @@ func TestStoreFailureNeverBecomesAnAnswer(t *testing.T) {
 	}
 }
 
-// data blocks exactly when the checker said to, and never otherwise. Which
-// errors qualify is the checker's decision; see check/rdapchecker.
+// data blocks exactly when the checker says to (see check/rdapchecker).
 func TestStoreBlocksOnlyWhenTold(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -149,7 +148,7 @@ func TestStoreBlocksOnlyWhenTold(t *testing.T) {
 	}
 }
 
-// A failure with no BlockReason must never reach blocked.
+// A failure without a BlockReason should never reach blocked.
 func TestStoreCancellationDoesNotBlock(t *testing.T) {
 	db := openTest(t)
 	ctx := context.Background()
@@ -174,9 +173,8 @@ func TestStoreCancellationDoesNotBlock(t *testing.T) {
 	}
 }
 
-// attempts grows by one row per transient failure forever, so retention has to
-// actually delete -- and has to leave recent failures alone, since those drive
-// the backoff exponent.
+// Retention has to actually delete old attempts, but leave recent ones since
+// they drive the backoff.
 func TestPruneAttemptsKeepsRecentFailures(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()

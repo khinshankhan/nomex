@@ -1,20 +1,16 @@
-// Package dnschecker establishes domain registration from DNS.
+// Package dnschecker checks domain registration with DNS.
 //
-// DNS is an approximation, and only in one direction. Nameserver records prove
-// a domain is registered; their absence proves nothing, because parked,
-// expired-but-in-grace and registered-not-delegated domains are all common.
-// So a lookup that finds nothing reports StatusUnknown rather than
-// StatusNotFound, and the caller has to ask RDAP.
+// DNS only works in one direction. Nameserver records prove a domain is
+// registered, but no records proves nothing since parked, expired and
+// undelegated domains are common. So a miss is StatusUnknown, not
+// StatusNotFound, and RDAP still has to be asked.
 //
-// What it buys is skipping RDAP for domains that are taken, which pays in
-// proportion to how registered a suffix is. Measured on this database: .com and
-// .net at 1-2 characters are 100% registered, .dev is 5%. So it is worth
-// running in front of RDAP for the dense suffixes and a waste for the sparse
-// ones.
+// It saves RDAP queries on taken domains, so it pays off on dense suffixes. On
+// this database .com and .net at 1-2 characters are 100% registered and .dev
+// is 5%.
 //
-// What it costs, beyond the lookup: a DNS answer carries no expiration date, so
-// a row established this way falls back to the default TTL and returns for a
-// full RDAP check later. It defers RDAP work rather than removing it.
+// NOTE: a DNS answer has no expiry, so the row gets the default TTL and comes
+// back for a full RDAP check later.
 package dnschecker
 
 import (
@@ -27,13 +23,12 @@ import (
 )
 
 // DefaultTimeout bounds a single lookup. Measured latency was 178-410ms, so
-// this is generous enough for a slow resolver and short enough that a hung one
-// does not hold a worker.
+// this leaves room for a slow resolver without letting a hung one hold a
+// worker.
 const DefaultTimeout = 5 * time.Second
 
-// lookupFunc is the nameserver lookup, injectable so the classification can be
-// tested without a network. net.Resolver's Dial hook cannot fabricate results,
-// only supply a transport, so faking has to happen at this level.
+// lookupFunc is the nameserver lookup, swappable so tests don't need a network.
+// net.Resolver's Dial hook can only supply a transport, not fake results.
 type lookupFunc func(ctx context.Context, domain string) ([]*net.NS, error)
 
 // Checker resolves domains against DNS.
@@ -45,14 +40,14 @@ type Checker struct {
 // Option configures a Checker.
 type Option func(*Checker)
 
-// WithResolver uses a specific resolver rather than the system one.
+// WithResolver uses a specific resolver instead of the system one.
 func WithResolver(r *net.Resolver) Option {
 	return func(c *Checker) {
 		c.lookup = r.LookupNS
 	}
 }
 
-// withLookup replaces the lookup entirely. Test-only.
+// withLookup replaces the lookup entirely, for tests.
 func withLookup(f lookupFunc) Option {
 	return func(c *Checker) {
 		c.lookup = f
@@ -80,19 +75,15 @@ func (c *Checker) Source() string {
 	return "dns"
 }
 
-// Check looks up nameservers for domain.
+// Check looks up nameservers for domain. There are three outcomes:
 //
-// Three outcomes, and keeping them apart is the whole point:
+//   - records exist: StatusRegistered, no expiry
+//   - authoritative "no": StatusUnknown, since DNS can't see a registered
+//     domain that isn't delegated
+//   - lookup failed: StatusUnknown with a retryable error
 //
-//   - records exist        -> StatusRegistered, no expiry
-//   - authoritative "no"   -> StatusUnknown, because DNS cannot see a
-//     registered domain that is not delegated
-//   - lookup failed        -> StatusUnknown with a retryable error
-//
-// The second and third both report StatusUnknown but differ in Err: a
-// not-found is a real answer that happens to be uninformative, while a resolver
-// failure established nothing at all. Conflating them is how a DNS hiccup
-// becomes a stored result.
+// The last two only differ in Err. A not-found is a real (if useless) answer,
+// a resolver failure is no answer at all and must not be stored as one.
 func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 	if c.timeout > 0 {
 		var cancel context.CancelFunc
@@ -106,9 +97,8 @@ func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 		Status: check.StatusUnknown,
 	}
 
-	// NS rather than host records: a registered domain may have no addresses
-	// but must have nameservers to be delegated, so NS is the closer proxy for
-	// registration.
+	// NS instead of host records: a registered domain may have no addresses
+	// but needs nameservers to be delegated
 	ns, err := c.lookup(ctx, domain)
 	switch {
 	case err == nil && len(ns) > 0:
@@ -116,18 +106,18 @@ func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 		return out
 
 	case err == nil:
-		// No error and no records: nothing to conclude.
+		// no error and no records, nothing to conclude
 		return out
 
 	case isNotFound(err):
-		// Authoritative "this name does not resolve". Still not "available":
-		// see the package comment.
+		// authoritative "does not resolve", still not "available" (see the
+		// package comment)
 		return out
 
 	default:
-		// A resolver failure establishes nothing. Retryable so the row is
-		// deferred rather than treated as an answer -- the old code returned
-		// 500 here and stored it alongside real results.
+		// a resolver failure establishes nothing, so retry later
+		// NOTE: the old code returned a 500 here and stored it with the real
+		// results
 		out.Err = err
 		out.ErrKind = errKind(err)
 		out.Retryable = true
@@ -135,7 +125,7 @@ func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 	}
 }
 
-// isNotFound reports an authoritative negative rather than a failure.
+// isNotFound reports an authoritative negative, as opposed to a failure.
 func isNotFound(err error) bool {
 	var dnsErr *net.DNSError
 	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
@@ -157,5 +147,5 @@ func errKind(err error) string {
 	return "dns failure"
 }
 
-// Compile-time proof that Checker satisfies the interface.
+// Checker satisfies check.Checker.
 var _ check.Checker = (*Checker)(nil)

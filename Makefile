@@ -16,22 +16,16 @@ SHELL := bash
 MAKEFLAGS += --warn-undefined-variables
 MAKEFLAGS += --no-builtin-rules
 
-# cgo-free on every platform, enforced by exporting this to every recipe: an
-# accidental cgo dependency fails the build instead of sneaking in.
-#
-# The race detector needs cgo on some platforms, so `test` re-enables it for
-# itself rather than losing the guarantee everywhere else.
+# cgo free on every platform, so an accidental cgo dependency fails the build.
+# `test` turns it back on for itself since the race detector needs it.
 export CGO_ENABLED := 0
 
-# goose reads its configuration from the environment. These are paths and a
-# driver name rather than secrets, and they are identical on every checkout, so
-# they live here instead of in an uncommitted .env that a fresh clone has to
-# reconstruct before `make migrate` works.
+# goose reads its config from the environment. These aren't secrets, so they
+# live here and a fresh clone can `make migrate` right away.
 #
-# The driver is "sqlite" (modernc.org/sqlite, pure Go), not "sqlite3"
-# (mattn/go-sqlite3), which needs cgo and would contradict CGO_ENABLED=0 above.
-# The database lives under var/, which is gitignored -- it is generated state,
-# not source. Override for a scratch copy: `make migrate DB=./var/scratch.db`
+# NOTE: the driver is "sqlite" (modernc, pure Go), not "sqlite3" which needs cgo.
+# The database lives under var/ (gitignored). For a scratch copy:
+# `make migrate DB=./var/scratch.db`
 # Defined before GOOSE_DBSTRING because := expands immediately.
 DB ?= ./var/nomex.db
 
@@ -41,9 +35,7 @@ export GOOSE_DBSTRING := $(DB)
 
 # VARIABLES
 #
-# A service is any ./cmd/*/main.go. An empty cmd/ is fine -- `make build` on no
-# services is a no-op, not an error -- so a binary starts building the day its
-# main.go appears.
+# A service is any ./cmd/*/main.go. With none, `make build` is a no-op.
 GOSERVICES = $(sort $(notdir $(realpath $(dir $(wildcard ./cmd/*/main.go)))))
 
 .PHONY: $(GOSERVICES)
@@ -67,22 +59,19 @@ services:
 
 # MIGRATIONS
 #
-# var/ is created on demand so a fresh clone can run `make migrate` without a
-# setup step; goose will not create the directory itself.
+# var/ is created on demand since goose won't create it
 $(dir $(DB)):
 	mkdir -p $@
 
-# goose logs through the log package, so every line carries a timestamp prefix
-# -- including the status header and its ==== separator, which breaks alignment.
+# goose prefixes every line with a timestamp, which breaks its own alignment
 GOOSE_STRIP_TS = sed -E 's/^[0-9]{4}\/[0-9]{2}\/[0-9]{2} [0-9:]{8}[[:space:]]*//'
 
 .PHONY: migrate
 migrate: | $(dir $(DB))
 	@goose up 2>&1 | $(GOOSE_STRIP_TS)
 
-# goose's own status table does not align its columns and sizes the separator
-# for a narrower row. This joins migrations/ against goose_db_version instead,
-# so unapplied files show as pending rather than being absent.
+# goose's status table doesn't align, so this joins migrations/ against
+# goose_db_version instead and shows unapplied files as pending
 .PHONY: migrate-status
 migrate-status: | $(dir $(DB))
 	@applied=$$(test -f $(DB) && sqlite3 -batch -noheader $(DB) \
@@ -117,16 +106,15 @@ migration:
 	@test -n "$(name)" || { echo "usage: make migration name=<snake_case>"; exit 1; }
 	@goose create $(name) sql 2>&1 | $(GOOSE_STRIP_TS)
 
-# rebuild the database from scratch. The migration is edited in place while it
-# is unpushed, and goose will not re-run an applied version, so a reset is how
-# schema changes actually land locally.
+# rebuild the database from scratch. Unpushed migrations get edited in place
+# and goose won't re-run an applied version, so this is how those land locally.
 .PHONY: db-reset
 db-reset:
 	rm -f $(DB) $(DB)-wal $(DB)-shm
 	$(MAKE) migrate
 
-# dump the live schema as SQL -- what the database actually has, which is not
-# the same as what migrations/ says once one has been edited in place.
+# dump the live schema as SQL, which can differ from migrations/ after an
+# in-place edit
 .PHONY: schema
 schema:
 	@test -f $(DB) || { echo "$(DB) does not exist; run make migrate"; exit 1; }
@@ -137,20 +125,19 @@ schema:
 sqlc:
 	sqlc generate
 
-# fails rather than rewrites, so CI reports stale generated code
+# fails instead of rewriting, so CI catches stale generated code
 .PHONY: sqlc-check
 sqlc-check:
 	sqlc diff
 
-# extra flags and a package selector for the test targets, e.g.
+# extra flags and a package selector for the test targets, eg
 #   make test GOTESTFLAGS=-v
 #   make test GOTESTFLAGS='-run TestFoo -v'
 #   make test PKG=./bootstrap/
 GOTESTFLAGS ?=
 PKG ?= ./...
 
-# -race by default; it needs cgo, hence the local override of the repo-wide
-# CGO_ENABLED=0.
+# -race by default, which needs cgo, hence the local CGO_ENABLED override
 .PHONY: test
 test:
 	CGO_ENABLED=1 go test -race $(GOTESTFLAGS) $(PKG)
@@ -165,9 +152,8 @@ cover:
 	CGO_ENABLED=1 go test -race -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
 
-# everything CI should gate on. sqlc-check is here so generated code that has
-# drifted from migrations/ or queries/ fails the build rather than being
-# discovered later by a confusing type error.
+# everything CI should gate on, including sqlc-check so drifted generated code
+# fails here instead of as a confusing type error later
 .PHONY: check
 check: fmt-check vet sqlc-check test
 
@@ -176,8 +162,7 @@ fmt:
 	gofmt -w .
 	go mod tidy
 
-# fails rather than rewrites, so CI reports unformatted code instead of
-# silently passing on a dirty tree
+# fails instead of rewriting, so CI catches unformatted code
 .PHONY: fmt-check
 fmt-check:
 	@unformatted=$$(gofmt -l .); \
@@ -197,8 +182,8 @@ clean:
 # `make darwin/arm64` checks just that one.
 GOCROSSPLATFORMS = linux/amd64 windows/amd64 darwin/arm64
 
-# prove everything builds cgo-free for every shipping platform. ./... rather
-# than ./cmd/... so library packages are covered whether or not a binary exists.
+# check everything builds cgo free on every shipping platform, ./... so library
+# packages are covered too
 .PHONY: cross $(GOCROSSPLATFORMS)
 cross: $(GOCROSSPLATFORMS)
 

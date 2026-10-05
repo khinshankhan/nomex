@@ -1,9 +1,8 @@
 // Package gather generates candidate domains and seeds them into the database.
 //
-// Seeding is decoupled from checking. Writing rows is fast -- roughly 57k
-// rows/sec measured, so the full 1-5 character space across three TLDs is about
-// eleven minutes -- while checking them is bounded by registry rate limits and
-// takes months. The queue is expected to stay longer than the sweep can drain.
+// Seeding is separate from checking. Writing rows is fast (~57k rows/sec, so
+// the full 1-5 character space across three TLDs takes about eleven minutes),
+// while checking is bound by registry rate limits and takes months.
 package gather
 
 import (
@@ -12,12 +11,9 @@ import (
 	"strings"
 )
 
-// Alphabet is the default label alphabet: lowercase ASCII only.
-//
-// Digits and hyphens are legal in a hostname label but excluded by default.
-// They multiply the space (36 characters instead of 26 means a 5-character
-// label goes from 11.9M to 60M) for candidates that are, in practice, less
-// interesting to look at.
+// Alphabet is the default label alphabet, lowercase ASCII only. Digits and
+// hyphens are legal but left out by default since they blow up the space (a
+// 5 character label goes from 11.9M to 60M) for less interesting names.
 const Alphabet = "abcdefghijklmnopqrstuvwxyz"
 
 // Spec describes a candidate space: every label of length MinLen..MaxLen over
@@ -39,14 +35,13 @@ func (s Spec) Validate() error {
 	case s.MaxLen < s.MinLen:
 		return fmt.Errorf("max length %d is below min length %d", s.MaxLen, s.MinLen)
 	case s.MaxLen > 63:
-		// RFC 1035: a label is at most 63 octets.
+		// RFC 1035 caps a label at 63 octets
 		return fmt.Errorf("max length %d: a DNS label is at most 63 characters", s.MaxLen)
 	}
 
-	// Reject characters that are not legal in a hostname label. Seeding them
-	// would produce candidates every RDAP query rejects as ErrInvalidQuery,
-	// which is an allowlisted reason to write to blocked -- so a typo here
-	// would permanently blocklist a slice of the namespace.
+	// reject anything that isn't legal in a hostname label
+	// NOTE: RDAP rejects those as ErrInvalidQuery, which blocks the domain, so
+	// a typo here would permanently block a slice of the namespace
 	for _, r := range s.alphabet() {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
@@ -74,16 +69,12 @@ func (s Spec) alphabet() string {
 	return Alphabet
 }
 
-// MaxCount caps a spec's size. Above this Count would overflow int64 and
-// report a negative total, and no useful run is anywhere near it: the full
-// 1-5 character space across three TLDs is 37 million.
+// MaxCount caps a spec's size, above it Count would overflow int64. For scale,
+// the full 1-5 character space across three TLDs is 37 million.
 const MaxCount = int64(1) << 40 // ~1.1 trillion
 
 // Count returns how many candidates All will yield, or an error if the space is
-// too large to represent.
-//
-// The space grows by the size of the alphabet per character, so one more
-// character is 26x the work. Worth calling before committing to a run.
+// too large. Each extra character is 26x the work, so check before a big run.
 func (s Spec) Count() (int64, error) {
 	alpha := int64(len(s.alphabet()))
 	tlds := int64(len(s.TLDs))
@@ -106,12 +97,9 @@ func (s Spec) Count() (int64, error) {
 	return total * tlds, nil
 }
 
-// All yields every candidate, shortest labels first.
-//
-// Order matters for seeding: short labels are the scarce, interesting ones, and
-// emitting them first means an interrupted seed has covered the useful part.
-// Within a length the order is lexicographic, so a resumed run repeats the same
-// sequence and OR IGNORE skips what already landed.
+// All yields every candidate, shortest labels first since those are the
+// interesting ones. Within a length the order is lexicographic, so a resumed
+// run repeats the same sequence and OR IGNORE skips what already landed.
 func (s Spec) All() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		alpha := s.alphabet()

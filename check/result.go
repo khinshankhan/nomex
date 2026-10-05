@@ -5,17 +5,15 @@ import (
 	"time"
 )
 
-// Checker establishes what a registry says about a domain.
+// Checker asks a registry about a domain. There is one per protocol: RDAP, DNS,
+// and maybe WHOIS later for suffixes without an RDAP server.
 //
-// Implementations are per-protocol: RDAP today, plausibly WHOIS for suffixes
-// that publish no RDAP server, or DNS as a cheap approximation.
-//
-// A Checker never reports a failure as a status. "We could not find out" and
-// "the answer is no" are different claims, and conflating them is what banned
-// 42k domains in November.
+// A Checker never reports a failure as a status. "Could not find out" is not
+// "not registered", and mixing the two up is what blocked 42k domains in
+// November.
 type Checker interface {
-	// Check asks about one domain. A failure is reported in Result.Err, and
-	// Result.Status is StatusUnknown, never StatusNotFound.
+	// Check asks about one domain. A failure goes in Result.Err with
+	// StatusUnknown, never StatusNotFound.
 	Check(ctx context.Context, domain string) Result
 
 	// Source names the protocol, for checks.source.
@@ -31,14 +29,13 @@ type Result struct {
 	Source string
 
 	// Expiration and Registered come from the registry when it publishes
-	// them. Both nil for an available domain, and nil from any checker that
-	// cannot see them -- DNS, for instance, can establish that a name is
-	// registered without learning when the registration ends.
+	// them. Both are nil for an available domain, and for checkers like DNS
+	// that can't see dates.
 	Expiration *time.Time
 	Registered *time.Time
 
-	// Server is the full URL that answered, kept as provenance. Origin is its
-	// scheme://host, which is what per-server state is keyed on.
+	// Server is the full URL that answered. Origin is its scheme://host, which
+	// per-server state is keyed on.
 	Server string
 	Origin string
 
@@ -46,25 +43,23 @@ type Result struct {
 	// longer authoritative.
 	Stale bool
 
-	// Err is set when the check established nothing. Never store this as a
+	// Err is set when the check established nothing. It is never stored as a
 	// status.
 	Err        error
 	Retryable  bool
 	RetryAfter time.Duration
 
-	// ErrKind names the failure for attempts.error_kind. Protocol-specific,
-	// stored as text for diagnosis rather than interpreted.
+	// ErrKind names the failure for attempts.error_kind. Protocol specific and
+	// only kept for debugging.
 	ErrKind string
 
-	// BlockReason is set only when the failure is a fact about the DOMAIN --
-	// no server published for its suffix, a malformed name, a deliberate
-	// refusal -- rather than about a server or about us.
+	// BlockReason is set only when the failure is about the domain itself: no
+	// server for its suffix, a malformed name, or an explicit refusal.
 	//
-	// Deciding this belongs to the checker, which knows its own error
-	// taxonomy. It is deliberately NOT "the error is not retryable": for RDAP
-	// that also covers unclassified failures and redirect problems, and
-	// blocking on those writes a domain off permanently because of someone
-	// else's misconfiguration.
+	// The checker decides this since it knows its own errors.
+	// NOTE: this is not the same as "not retryable". For RDAP that also covers
+	// unclassified and redirect failures, and blocking on those would write a
+	// domain off for good over someone else's misconfiguration.
 	BlockReason string
 }
 

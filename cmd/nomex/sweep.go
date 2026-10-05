@@ -34,8 +34,7 @@ func runSweep(ctx context.Context, args []string) error {
 		fmt.Fprint(os.Stderr, `usage: nomex sweep [flags]
 
 Checks domains whose answers have gone stale and writes the results back.
-Runs until interrupted; there is no finish line, because the candidate space
-is far larger than the rate limit can drain.
+Runs until interrupted.
 
   nomex sweep -once -limit 10     # a taste, to see it work
   nomex sweep -rate 1             # gentler
@@ -49,8 +48,7 @@ flags:
 		return err
 	}
 
-	// Before anything is queried: a registry has to be able to reach whoever
-	// is querying it.
+	// before anything is queried
 	if err := requireContact(); err != nil {
 		return err
 	}
@@ -66,9 +64,8 @@ flags:
 		return err
 	}
 
-	// Resolving the server before dispatch is what lets a throttled registry
-	// be skipped. One fetch of the IANA registry at startup; lookups after
-	// that are a map read.
+	// resolving servers up front lets throttled registries be skipped, it's
+	// one IANA fetch and then map lookups
 	origins, err := rdapchecker.NewOriginResolver()
 	if err != nil {
 		return err
@@ -99,7 +96,7 @@ flags:
 		Origins:     origins,
 		PreCheck:    preCheck,
 		Progress: func(s sweep.Stat) {
-			// Workers report concurrently, and each suffix runs its own pool.
+			// workers report concurrently, and each suffix runs its own pool
 			mu.Lock()
 			defer mu.Unlock()
 
@@ -131,7 +128,7 @@ flags:
 		},
 	})
 
-	// Cancellation is how this command normally ends, not a failure.
+	// Ctrl-C is how this normally ends, not a failure
 	if err != nil && !sweep.Cancelled(err) {
 		return fmt.Errorf("after %d checks: %w", done, err)
 	}

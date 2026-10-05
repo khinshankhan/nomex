@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Resolution must group by server, not by suffix: .com and .net are one
-// Verisign origin with different paths, so they share a rate limit.
+// Origins group by server, not suffix. .com and .net are the same Verisign
+// origin, so they share a rate limit.
 func TestOriginGroupsBySever(t *testing.T) {
 	if testing.Short() {
 		t.Skip("fetches the IANA bootstrap registry")
@@ -44,7 +44,7 @@ func TestOriginGroupsBySever(t *testing.T) {
 		t.Errorf(".com and .dev both resolved to %q; expected different registries", com)
 	}
 
-	// An unserved suffix is not an error, just no origin.
+	// an unserved suffix isn't an error, just no origin
 	none, err := r.Origin(ctx, "example.invalidtldthatdoesnotexist")
 	if err != nil {
 		t.Errorf("unserved suffix returned an error: %v", err)

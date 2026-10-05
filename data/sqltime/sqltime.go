@@ -9,14 +9,12 @@ import (
 
 // UTC is a time.Time that always stores as UTC.
 //
-// SQLite has no date type: DATETIME is text, and comparison is lexicographic.
-// A stored "-04:00" offset is therefore not interpreted, so a timestamp an hour
-// in the future sorts as though it were hours in the past. Normalising in the
-// driver value means a caller cannot get it wrong by passing a local time.
+// SQLite has no date type, DATETIME is text and compares as a string. A stored
+// "-04:00" offset isn't interpreted, so an hour from now can sort as hours ago.
+// Normalizing here means passing a local time can't break it.
 //
-// Queries still wrap stored timestamps in datetime() when comparing, which
-// covers rows written by anything that is not this type -- SQLite's own
-// CURRENT_TIMESTAMP default, or a hand-run UPDATE.
+// Queries still wrap timestamps in datetime() when comparing, for rows written
+// some other way (CURRENT_TIMESTAMP defaults, a manual UPDATE).
 type UTC struct {
 	time.Time
 }
@@ -65,7 +63,7 @@ func (u *UTC) Scan(v any) error {
 	case string:
 		parsed, err := time.Parse(time.RFC3339Nano, t)
 		if err != nil {
-			// SQLite's own CURRENT_TIMESTAMP has no zone and is UTC.
+			// CURRENT_TIMESTAMP has no zone and is UTC
 			parsed, err = time.ParseInLocation("2006-01-02 15:04:05", t, time.UTC)
 			if err != nil {
 				return fmt.Errorf("sqltime: parse %q: %w", t, err)

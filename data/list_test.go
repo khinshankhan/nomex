@@ -78,8 +78,7 @@ func TestListChecksFilters(t *testing.T) {
 			want:   []string{"a.dev"},
 		},
 		{
-			// The premise of the project: a lapsed answer is still an answer,
-			// so it is listed unless explicitly excluded.
+			// an old answer is still an answer, listed unless excluded
 			name:   "fresh only omits lapsed answers",
 			params: sqlcgen.ListChecksParams{Status: "not_found", FreshOnly: 1},
 			want:   []string{"a.dev", "d.net", "bb.dev"},
@@ -110,7 +109,7 @@ func TestListChecksFilters(t *testing.T) {
 	}
 }
 
-// The stale flag is what tells a caller how much to trust the row.
+// The stale flag tells a caller how much to trust the row.
 func TestListChecksReportsStaleness(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()
@@ -134,15 +133,13 @@ func TestListChecksReportsStaleness(t *testing.T) {
 	}
 }
 
-// SQLite compares DATETIME text lexicographically, so a stored "-04:00" offset
-// is not interpreted: a timestamp an hour in the future reads as hours stale
-// unless the comparison wraps the column in datetime().
+// SQLite compares DATETIME as text, so a stored "-04:00" offset is ignored and
+// an hour from now reads as hours stale unless wrapped in datetime().
 func TestTimestampComparisonsHonourOffsets(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()
 
-	// Deliberately not UTC. A caller passing a local time must not silently
-	// corrupt due-detection.
+	// not UTC on purpose, a local time shouldn't break due detection
 	local := time.Now().Add(time.Hour)
 	if local.Location() == time.UTC {
 		t.Skip("machine is on UTC; this bug is invisible here")
@@ -162,7 +159,7 @@ func TestTimestampComparisonsHonourOffsets(t *testing.T) {
 		t.Error("a timestamp an hour in the future was reported stale")
 	}
 
-	// And the sweep must not claim it as work.
+	// and the sweep shouldn't claim it
 	due, err := db.DueChecks(ctx, 10)
 	if err != nil {
 		t.Fatal(err)

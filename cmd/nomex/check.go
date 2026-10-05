@@ -19,11 +19,9 @@ import (
 	"github.com/khinshankhan/nomex/sweep"
 )
 
-// runCheck answers for specific names, now.
-//
-// A stored answer that is still fresh is reported rather than re-queried, so
-// checking the same shortlist twice costs nothing. Everything checked is
-// stored, so `nomex list` and the sweep see it afterwards.
+// runCheck checks specific names right away. Fresh stored answers are reused
+// instead of re-queried, and everything checked is stored for `nomex list` and
+// the sweep.
 func runCheck(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
 	dbPath := flags.String("db", config.DB(), "path to the database")
@@ -82,7 +80,7 @@ flags:
 		return err
 	}
 
-	// Split into what the database can already answer and what needs asking.
+	// split into what the database already knows and what needs asking
 	now := time.Now()
 	blocked := make(map[string]bool)
 	var due []string
@@ -109,8 +107,7 @@ flags:
 		failures = make(map[string]string)
 	)
 	if len(due) > 0 {
-		// Only now: answering from the database queries nobody, so it should
-		// not need a contact.
+		// only needed now, answering from the database queries nobody
 		if err := requireContact(); err != nil {
 			return err
 		}
@@ -142,7 +139,7 @@ flags:
 			Origins:     origins,
 			PreCheck:    preCheck,
 			Progress: func(s sweep.Stat) {
-				// Workers report concurrently.
+				// workers report concurrently
 				mu.Lock()
 				defer mu.Unlock()
 
@@ -159,8 +156,8 @@ flags:
 		}
 	}
 
-	// Report in input order, from the database, so a fresh answer and a
-	// stored one read the same way.
+	// report in input order, from the database, so fresh and stored answers
+	// look the same
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "DOMAIN\tSTATUS\tCHECKED\tDETAIL")
 	for _, d := range domains {
@@ -180,16 +177,14 @@ flags:
 
 		detail := staleness(row.Stale, row.Expiration)
 		if row.Source != nil && *row.Source == "dns" {
-			// DNS proves registration but carries no dates; say so rather
-			// than leave the blank looking like "no expiry".
+			// DNS has no dates, say so instead of leaving a blank
 			detail = "via dns, no expiry known"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", d, row.Status, age(now, row.CheckedAt), detail)
 	}
 	w.Flush()
 
-	// Cancelled mid-run, some rows are still unchecked; that is not an answer
-	// either.
+	// cancelled mid-run, some rows are still unchecked
 	if err := ctx.Err(); err != nil {
 		return err
 	}
