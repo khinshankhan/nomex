@@ -107,3 +107,34 @@ func TestStoreFailureStopsTheBatch(t *testing.T) {
 		t.Errorf("checked %d domains after the first store failed, want 1", n)
 	}
 }
+
+// A DNS hit never reached the RDAP server, so it says nothing about that
+// server's health.
+func TestPreCheckHitLeavesServerStateAlone(t *testing.T) {
+	db := openDB(t)
+	const origin = "https://rdap.example"
+
+	if _, err := db.SeedCheck(t.Context(), sqlcgen.SeedCheckParams{
+		Domain:     "a.dev",
+		FreshUntil: sqltime.At(time.Now().Add(-time.Hour)),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// a failure streak whose throttle has already lapsed, so nothing is skipped
+	if err := db.ThrottleUntil(t.Context(), origin, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("throttle: %v", err)
+	}
+
+	_, err := CheckDomains(t.Context(), db, newFake(check.Result{Status: check.StatusNotFound}), []string{"a.dev"}, Options{
+		Limits:   Limits{Every: time.Microsecond, Burst: 100},
+		Origins:  fixedOrigin(origin),
+		PreCheck: newFake(check.Result{Status: check.StatusRegistered, Source: "dns"}),
+	})
+	if err != nil {
+		t.Fatalf("CheckDomains: %v", err)
+	}
+
+	if n := db.ServerFailures(t.Context(), origin); n != 1 {
+		t.Errorf("failures = %d, want 1 (untouched by a DNS answer)", n)
+	}
+}

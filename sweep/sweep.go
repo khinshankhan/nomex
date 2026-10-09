@@ -340,8 +340,9 @@ func round(
 				// anything else falls through to the real checker
 				var res check.Result
 				if opts.PreCheck != nil {
+					// no Origin: the RDAP server wasn't asked, so its state
+					// shouldn't move
 					if pre := opts.PreCheck.Check(ctx, domain); pre.Status == check.StatusRegistered {
-						pre.Origin = origin
 						res = pre
 					}
 				}
