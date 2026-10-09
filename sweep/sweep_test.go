@@ -2,6 +2,7 @@ package sweep
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,5 +81,29 @@ func TestThrottledDomainsAreNotReclaimed(t *testing.T) {
 	}
 	if n := skips.Load(); n != 1 {
 		t.Errorf("skipped %d times, want 1", n)
+	}
+}
+
+// Once a result can't be saved, the rest of the batch shouldn't be sent to the
+// registry only to be thrown away.
+func TestStoreFailureStopsTheBatch(t *testing.T) {
+	db := openDB(t)
+
+	// unseeded, so recording the failed attempt breaks its foreign key
+	domains := []string{"a.dev", "b.dev", "c.dev", "d.dev", "e.dev"}
+	checker := newFake(check.Result{Status: check.StatusUnknown, Err: errors.New("refused")})
+
+	_, err := CheckDomains(t.Context(), db, checker, domains, Options{
+		Limits:  Limits{Every: time.Microsecond, Burst: 100},
+		Workers: 1,
+	})
+	if err == nil {
+		t.Fatal("CheckDomains succeeded, want a store error")
+	}
+
+	checker.mu.Lock()
+	defer checker.mu.Unlock()
+	if n := len(checker.calls); n != 1 {
+		t.Errorf("checked %d domains after the first store failed, want 1", n)
 	}
 }

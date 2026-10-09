@@ -286,6 +286,9 @@ func round(
 	work := make(chan string)
 
 	var firstErr error
+	// set on a store failure so the rest of the batch isn't checked only for
+	// its results to be thrown away
+	var failed atomic.Bool
 
 	var wg sync.WaitGroup
 	for w := range workers {
@@ -298,6 +301,10 @@ func round(
 			backoff := newBackoff(int64(workerID) * 10_000)
 
 			for domain := range work {
+				if failed.Load() {
+					continue
+				}
+
 				// resolve the server first so a throttled registry is skipped
 				// without spending a token or a query
 				origin := ""
@@ -321,6 +328,7 @@ func round(
 							firstErr = fmt.Errorf("defer %s: %w", domain, err)
 						}
 						mu.Unlock()
+						failed.Store(true)
 					}
 					if opts.Progress != nil {
 						opts.Progress(Stat{Domain: domain, Origin: origin, Skipped: true})
@@ -372,6 +380,7 @@ func round(
 						firstErr = fmt.Errorf("store %s: %w", domain, err)
 					}
 					mu.Unlock()
+					failed.Store(true)
 				}
 				count := total.Add(1)
 
@@ -392,6 +401,9 @@ func round(
 feed:
 	for _, d := range domains {
 		if opts.Limit > 0 && total.Load() >= opts.Limit {
+			break
+		}
+		if failed.Load() {
 			break
 		}
 		select {
