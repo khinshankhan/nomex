@@ -480,7 +480,8 @@ type RecordServerFailureParams struct {
 
 // rate_limited_until is only extended, never shortened: a later failure with no
 // Retry-After must not cancel a longer wait the server explicitly asked for.
-// NULLIF so two NULLs stay NULL rather than ”, which no reader can parse.
+// NULLIF so two NULLs stay NULL rather than an empty string, which no reader
+// can parse.
 func (q *Queries) RecordServerFailure(ctx context.Context, arg RecordServerFailureParams) error {
 	_, err := q.db.ExecContext(ctx, recordServerFailure, arg.Origin, arg.LastFailure, arg.RateLimitedUntil)
 	return err

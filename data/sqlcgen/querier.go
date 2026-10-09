@@ -68,7 +68,8 @@ type Querier interface {
 	RecordAttempt(ctx context.Context, arg RecordAttemptParams) error
 	// rate_limited_until is only extended, never shortened: a later failure with no
 	// Retry-After must not cancel a longer wait the server explicitly asked for.
-	// NULLIF so two NULLs stay NULL rather than '', which no reader can parse.
+	// NULLIF so two NULLs stay NULL rather than an empty string, which no reader
+	// can parse.
 	RecordServerFailure(ctx context.Context, arg RecordServerFailureParams) error
 	RecordServerSuccess(ctx context.Context, arg RecordServerSuccessParams) error
 	// OR IGNORE so re-running a narrower seed over a wider one is a no-op per row

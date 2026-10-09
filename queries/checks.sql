@@ -146,7 +146,8 @@ ON CONFLICT(origin) DO UPDATE SET
 -- name: RecordServerFailure :exec
 -- rate_limited_until is only extended, never shortened: a later failure with no
 -- Retry-After must not cancel a longer wait the server explicitly asked for.
--- NULLIF so two NULLs stay NULL rather than '', which no reader can parse.
+-- NULLIF so two NULLs stay NULL rather than an empty string, which no reader
+-- can parse.
 INSERT INTO servers (origin, last_failure, consecutive_failures, rate_limited_until)
 VALUES (?, ?, 1, ?)
 ON CONFLICT(origin) DO UPDATE SET
