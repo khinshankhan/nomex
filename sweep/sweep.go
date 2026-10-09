@@ -17,6 +17,7 @@ import (
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
+	"github.com/khinshankhan/nomex/data/sqltime"
 	"github.com/khinshankhan/nomex/platform/logx"
 )
 
@@ -309,6 +310,18 @@ func round(
 				until, blocked := throttled[origin]
 				mu.Unlock()
 				if blocked && origin != "" && time.Now().Before(until) {
+					// push it past the throttle, otherwise it stays due and the
+					// next claim hands back the same rows to skip again
+					if err := db.DeferCheck(ctx, sqlcgen.DeferCheckParams{
+						Domain:     domain,
+						FreshUntil: sqltime.At(until),
+					}); err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = fmt.Errorf("defer %s: %w", domain, err)
+						}
+						mu.Unlock()
+					}
 					if opts.Progress != nil {
 						opts.Progress(Stat{Domain: domain, Origin: origin, Skipped: true})
 					}
