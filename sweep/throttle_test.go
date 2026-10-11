@@ -26,14 +26,20 @@ func TestThrottlesActive(t *testing.T) {
 	}
 }
 
-func TestThrottlesNeverShorten(t *testing.T) {
+// A wait can grow but never shrink, so a short Retry-After can't cancel a long
+// one.
+func TestThrottlesExtend(t *testing.T) {
 	now := time.Now()
 	th := newThrottles(nil)
 
 	th.extend("https://a", now.Add(time.Hour))
 	th.extend("https://a", now.Add(time.Minute))
-
 	if until, _ := th.active("https://a", now); !until.Equal(now.Add(time.Hour)) {
-		t.Errorf("until = %v, want %v", until, now.Add(time.Hour))
+		t.Errorf("after a shorter wait: until = %v, want %v", until, now.Add(time.Hour))
+	}
+
+	th.extend("https://a", now.Add(2*time.Hour))
+	if until, _ := th.active("https://a", now); !until.Equal(now.Add(2 * time.Hour)) {
+		t.Errorf("after a longer wait: until = %v, want %v", until, now.Add(2*time.Hour))
 	}
 }

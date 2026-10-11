@@ -51,18 +51,37 @@ func TestSpecAllOrder(t *testing.T) {
 	}
 }
 
-// Count should refuse totals it can't represent. It used to go negative at 15
-// characters and the CLI printed it.
-func TestCountRejectsOversizedSpace(t *testing.T) {
-	for _, n := range []int{15, 20, 63} {
-		spec := Spec{TLDs: []string{"dev"}, MinLen: n, MaxLen: n}
-		got, err := spec.Count()
-		if err == nil {
-			t.Errorf("max=%d: Count() = %d, want an error", n, got)
-		}
-		if got < 0 {
-			t.Errorf("max=%d: Count() returned a negative total %d", n, got)
-		}
+// Count refuses totals past 2^40 rather than overflowing. It used to go
+// negative at 15 characters and the CLI printed it.
+func TestCountLimit(t *testing.T) {
+	const limit = int64(1) << 40
+
+	tests := []struct {
+		name string
+		spec Spec
+		want int64 // 0 means an error
+	}{
+		{"exactly the limit", Spec{TLDs: []string{"dev"}, MinLen: 40, MaxLen: 40, Alphabet: "ab"}, limit},
+		{"one length past it", Spec{TLDs: []string{"dev"}, MinLen: 41, MaxLen: 41, Alphabet: "ab"}, 0},
+		{"exactly the limit across TLDs", Spec{TLDs: []string{"dev", "net"}, MinLen: 39, MaxLen: 39, Alphabet: "ab"}, limit},
+		{"TLDs push it past", Spec{TLDs: []string{"dev", "net"}, MinLen: 40, MaxLen: 40, Alphabet: "ab"}, 0},
+		{"15 characters", Spec{TLDs: []string{"dev"}, MinLen: 15, MaxLen: 15}, 0},
+		{"63 characters", Spec{TLDs: []string{"dev"}, MinLen: 63, MaxLen: 63}, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.spec.Count()
+			if tt.want == 0 {
+				if err == nil || got != 0 {
+					t.Errorf("Count() = %d, %v, want 0 and an error", got, err)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("Count() = %d, %v, want %d", got, err, tt.want)
+			}
+		})
 	}
 }
 

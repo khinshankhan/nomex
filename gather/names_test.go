@@ -77,4 +77,13 @@ func TestSeedDomainsIsIncremental(t *testing.T) {
 	if got := count(t, db); got != 3 {
 		t.Errorf("rows = %d, want 3", got)
 	}
+
+	// `nomex check` seeds then checks straight away, so they must be due
+	due, err := db.DueChecks(ctx, 10)
+	if err != nil {
+		t.Fatalf("DueChecks: %v", err)
+	}
+	if len(due) != 3 {
+		t.Errorf("%d rows due, want all 3", len(due))
+	}
 }

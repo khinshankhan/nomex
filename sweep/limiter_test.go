@@ -40,6 +40,17 @@ func TestLimiterWait(t *testing.T) {
 	}
 }
 
+// Without a deadline there's nothing to refuse against, so wait waits.
+func TestLimiterWaitsWithoutDeadline(t *testing.T) {
+	lims := newLimiters(Limits{Every: time.Millisecond, Burst: 1})
+
+	for i := range 3 {
+		if err := lims.wait(context.Background(), "o"); err != nil {
+			t.Fatalf("token %d: %v", i, err)
+		}
+	}
+}
+
 // A measured registry gets its own budget instead of the default, but an
 // explicit -rate wins over both.
 func TestLimiterBudgets(t *testing.T) {
