@@ -50,6 +50,9 @@ flags:
 	if err != nil {
 		return err
 	}
+	if err := atLeastOne(flags, "workers", "attempts", "batch"); err != nil {
+		return err
+	}
 
 	if err := requireContact(); err != nil {
 		return err

@@ -55,6 +55,9 @@ flags:
 	if err != nil {
 		return err
 	}
+	if err := atLeastOne(flags, "workers", "attempts"); err != nil {
+		return err
+	}
 
 	names := flags.Args()
 	if len(names) == 0 || (len(names) == 1 && names[0] == "-") {

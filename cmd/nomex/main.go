@@ -126,6 +126,9 @@ func limitFlags(flags *flag.FlagSet) func() (sweep.Limits, error) {
 		})
 
 		l := sweep.Limits{Burst: *burst}
+		if set["burst"] && *burst < 1 {
+			return sweep.Limits{}, &usageError{fmt.Sprintf("-burst %d: must be at least 1", *burst)}
+		}
 		if set["rate"] {
 			// NOTE: !(rate > 0) also catches NaN
 			if !(*rate > 0) || math.IsInf(*rate, 0) {
@@ -135,6 +138,17 @@ func limitFlags(flags *flag.FlagSet) func() (sweep.Limits, error) {
 		}
 		return l, nil
 	}
+}
+
+// atLeastOne fails if any of the named int flags is below one, which would
+// otherwise quietly fall back to its default.
+func atLeastOne(flags *flag.FlagSet, names ...string) error {
+	for _, name := range names {
+		if n := flags.Lookup(name).Value.(flag.Getter).Get().(int); n < 1 {
+			return &usageError{fmt.Sprintf("-%s %d: must be at least 1", name, n)}
+		}
+	}
+	return nil
 }
 
 // describeLimits says what -rate and -burst came to, for the startup line.

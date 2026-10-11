@@ -24,6 +24,8 @@ func TestLimitFlags(t *testing.T) {
 		{"negative rate", []string{"-rate", "-1"}, 0, 0, true},
 		{"infinite rate", []string{"-rate", "+Inf"}, 0, 0, true},
 		{"rate not a number", []string{"-rate", "NaN"}, 0, 0, true},
+		{"zero burst", []string{"-burst", "0"}, 0, 0, true},
+		{"negative burst", []string{"-burst", "-2"}, 0, 0, true},
 	}
 
 	for _, tt := range tests {
@@ -44,6 +46,35 @@ func TestLimitFlags(t *testing.T) {
 			if got.Every != tt.wantEvery || got.Burst != tt.wantBurst {
 				t.Errorf("got every=%v burst=%d, want every=%v burst=%d",
 					got.Every, got.Burst, tt.wantEvery, tt.wantBurst)
+			}
+		})
+	}
+}
+
+func TestAtLeastOne(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{"defaults", nil, false},
+		{"one", []string{"-workers", "1", "-attempts", "1"}, false},
+		{"zero workers", []string{"-workers", "0"}, true},
+		{"negative attempts", []string{"-attempts", "-3"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flags := flag.NewFlagSet("test", flag.ContinueOnError)
+			flags.Int("workers", 4, "")
+			flags.Int("attempts", 3, "")
+			if err := flags.Parse(tt.args); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+
+			err := atLeastOne(flags, "workers", "attempts")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("err = %v, want error=%v", err, tt.wantErr)
 			}
 		})
 	}
