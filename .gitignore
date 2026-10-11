@@ -2,3 +2,7 @@ bin
 
 # generated state: the database and its WAL/shm sidecars
 var/
+
+# leftovers from before the rewrite: local env and the old db/ database
+.env
+*.sqlite
