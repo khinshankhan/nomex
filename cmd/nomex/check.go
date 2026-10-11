@@ -116,10 +116,6 @@ flags:
 		if err != nil {
 			return err
 		}
-		origins, err := rdapchecker.NewOriginResolver()
-		if err != nil {
-			return err
-		}
 
 		var preCheck check.Checker
 		if *useDNS {
@@ -136,7 +132,7 @@ flags:
 			},
 			MaxAttempts: *attempts,
 			Workers:     *workers,
-			Origins:     origins,
+			Origins:     checker,
 			PreCheck:    preCheck,
 			Progress: func(s sweep.Stat) {
 				// workers report concurrently

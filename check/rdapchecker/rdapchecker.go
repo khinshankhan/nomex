@@ -32,7 +32,8 @@ var blockable = map[rdap.ErrorKind]string{
 
 // Checker resolves domains against RDAP.
 type Checker struct {
-	client *rdap.Client
+	client   *rdap.Client
+	resolver *bootstrap.Resolver
 }
 
 // New returns a Checker using the given user agent. The library requires one
@@ -57,7 +58,7 @@ func New(userAgent string, opts ...rdap.ClientOption) (*Checker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rdap client: %w", err)
 	}
-	return &Checker{client: client}, nil
+	return &Checker{client: client, resolver: resolver}, nil
 }
 
 // Source implements check.Checker.

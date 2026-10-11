@@ -64,13 +64,6 @@ flags:
 		return err
 	}
 
-	// resolving servers up front lets throttled registries be skipped, it's
-	// one IANA fetch and then map lookups
-	origins, err := rdapchecker.NewOriginResolver()
-	if err != nil {
-		return err
-	}
-
 	var preCheck check.Checker
 	if *useDNS {
 		preCheck = dnschecker.New()
@@ -93,7 +86,7 @@ flags:
 		Batch:       *batch,
 		Limit:       *limit,
 		Once:        *once,
-		Origins:     origins,
+		Origins:     checker,
 		PreCheck:    preCheck,
 		Progress: func(s sweep.Stat) {
 			// workers report concurrently, and each suffix runs its own pool

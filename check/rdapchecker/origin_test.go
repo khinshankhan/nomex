@@ -8,14 +8,14 @@ import (
 
 // Origins group by server, not suffix. .com and .net are the same Verisign
 // origin, so they share a rate limit.
-func TestOriginGroupsBySever(t *testing.T) {
+func TestOriginGroupsByServer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("fetches the IANA bootstrap registry")
 	}
 
-	r, err := NewOriginResolver()
+	r, err := New("nomex-test (+https://github.com/khinshankhan/nomex)")
 	if err != nil {
-		t.Fatalf("NewOriginResolver: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
