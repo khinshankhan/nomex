@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -331,5 +332,68 @@ func TestFailureStreakCountsTheLastWeek(t *testing.T) {
 	want := time.Now().Add(20 * time.Minute)
 	if row.FreshUntil.Before(want.Add(-5*time.Second)) || row.FreshUntil.After(want.Add(5*time.Second)) {
 		t.Errorf("deferred to %v, want about %v", row.FreshUntil.Time, want)
+	}
+}
+
+// stalledChecker hangs on .dev until released, like a registry that stopped
+// answering, and answers everything else straight away.
+type stalledChecker struct {
+	release chan struct{}
+}
+
+func (stalledChecker) Source() string {
+	return "stalled"
+}
+
+func (c stalledChecker) Check(ctx context.Context, domain string) check.Result {
+	if strings.HasSuffix(domain, ".dev") {
+		select {
+		case <-c.release:
+		case <-ctx.Done():
+		}
+	}
+	return check.Result{Domain: domain, Status: check.StatusNotFound}
+}
+
+// Each suffix drains through its own pipeline, so a stalled registry can't hold
+// up another one. .dev only answers once every .com domain is done, which
+// deadlocks if the two share workers.
+func TestStalledSuffixDoesNotBlockOthers(t *testing.T) {
+	db := openDB(t)
+	// more .dev due, so it's claimed first and the stall is in front of .com
+	seedDue(t, db, "a.dev", "b.dev", "c.dev", "a.com", "b.com")
+
+	// a safety net so a regression fails instead of hanging
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	checker := stalledChecker{release: make(chan struct{})}
+	var (
+		mu      sync.Mutex
+		comDone int
+		checked []string
+	)
+	_, err := Run(ctx, db, checker, Options{
+		Limits:  fast,
+		Workers: 1,
+		Once:    true,
+		Progress: func(s Stat) {
+			mu.Lock()
+			defer mu.Unlock()
+
+			checked = append(checked, s.Domain)
+			if strings.HasSuffix(s.Domain, ".com") {
+				comDone++
+				if comDone == 2 {
+					close(checker.release)
+				}
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v (a stalled .dev held up .com)", err)
+	}
+	if len(checked) != 5 {
+		t.Errorf("checked %v, want all 5", checked)
 	}
 }
