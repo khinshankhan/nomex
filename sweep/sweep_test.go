@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,38 +50,58 @@ func (o fixedOrigin) Origin(context.Context, string) (string, error) {
 
 // A throttled registry's domains should be set aside until it reopens, not
 // re-claimed and re-skipped as fast as the loop can spin.
-func TestThrottledDomainsAreNotReclaimed(t *testing.T) {
+func TestThrottledDomainsAreDeferred(t *testing.T) {
 	db := openDB(t)
+	ctx := t.Context()
 	const origin = "https://rdap.example"
 
-	if _, err := db.SeedCheck(t.Context(), sqlcgen.SeedCheckParams{
+	if _, err := db.SeedCheck(ctx, sqlcgen.SeedCheckParams{
 		Domain:     "a.dev",
 		FreshUntil: sqltime.At(time.Now().Add(-time.Hour)),
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if err := db.ThrottleUntil(t.Context(), origin, time.Now().Add(time.Hour)); err != nil {
+	reopens := time.Now().Add(time.Hour).Truncate(time.Second)
+	if err := db.ThrottleUntil(ctx, origin, reopens); err != nil {
 		t.Fatalf("throttle: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
-	defer cancel()
-
-	var skips atomic.Int64
-	_, err := Run(ctx, db, newFake(check.Result{Status: check.StatusNotFound}), Options{
+	var skips int
+	checker := newFake(check.Result{Status: check.StatusNotFound})
+	_, err := Run(ctx, db, checker, Options{
 		Limits:  Limits{Every: time.Microsecond, Burst: 100},
 		Origins: fixedOrigin(origin),
+		Once:    true,
 		Progress: func(s Stat) {
 			if s.Skipped {
-				skips.Add(1)
+				skips++
 			}
 		},
 	})
-	if !Cancelled(err) {
+	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if n := skips.Load(); n != 1 {
-		t.Errorf("skipped %d times, want 1", n)
+
+	if skips != 1 {
+		t.Errorf("skipped %d times, want 1", skips)
+	}
+	if n := checker.calls["a.dev"]; n != 0 {
+		t.Errorf("queried a throttled registry %d times", n)
+	}
+
+	row, err := db.GetCheck(ctx, "a.dev")
+	if err != nil {
+		t.Fatalf("GetCheck: %v", err)
+	}
+	if !row.FreshUntil.Equal(reopens) {
+		t.Errorf("fresh_until = %v, want %v when the registry reopens", row.FreshUntil.Time, reopens)
+	}
+	due, err := db.DueChecks(ctx, 10)
+	if err != nil {
+		t.Fatalf("DueChecks: %v", err)
+	}
+	if len(due) != 0 {
+		t.Errorf("still due: %v", due)
 	}
 }
 

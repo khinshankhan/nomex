@@ -2,51 +2,41 @@ package sweep
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"golang.org/x/time/rate"
 )
 
-// One registry's traffic shouldn't spend another's budget.
-func TestLimitersAreIndependentPerOrigin(t *testing.T) {
-	lims := newLimiters(Limits{Every: time.Hour, Burst: 1})
-	ctx := context.Background()
+// One registry's traffic shouldn't spend another's budget, and a token that
+// can't arrive before the deadline is refused up front rather than waited for.
+func TestLimiterWait(t *testing.T) {
+	const (
+		google   = "https://pubapi.registry.google"
+		verisign = "https://rdap.verisign.com"
+	)
 
-	// spend google's single token
-	if err := lims.wait(ctx, "https://pubapi.registry.google"); err != nil {
-		t.Fatalf("first google token: %v", err)
-	}
-
-	// verisign should still have its own right away
-	start := time.Now()
-	if err := lims.wait(ctx, "https://rdap.verisign.com"); err != nil {
-		t.Fatalf("verisign token: %v", err)
-	}
-	if waited := time.Since(start); waited > 50*time.Millisecond {
-		t.Errorf("verisign waited %v for a token google spent", waited)
-	}
-}
-
-// A query that can't finish before the deadline should be dropped, not queued.
-func TestLimiterRespectsDeadline(t *testing.T) {
+	// an hour per token, so a second token never arrives within the test
 	lims := newLimiters(Limits{Every: time.Hour, Burst: 1})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 
-	if err := lims.wait(ctx, "o"); err != nil {
-		t.Fatalf("first token: %v", err)
+	if err := lims.wait(ctx, google); err != nil {
+		t.Fatalf("first google token: %v", err)
+	}
+	if err := lims.wait(ctx, verisign); err != nil {
+		t.Errorf("verisign was refused a token google spent: %v", err)
 	}
 
-	start := time.Now()
-	err := lims.wait(ctx, "o")
-	if err == nil {
-		t.Fatal("waiting past the deadline returned nil")
+	err := lims.wait(ctx, google)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("second google token: err = %v, want DeadlineExceeded", err)
 	}
-	// should give up right away instead of sleeping to the deadline
-	if waited := time.Since(start); waited > 15*time.Millisecond {
-		t.Errorf("gave up after %v; expected an immediate refusal", waited)
+	// still live means it refused right away instead of sleeping to the deadline
+	if ctx.Err() != nil {
+		t.Error("wait slept until the deadline before refusing")
 	}
 }
 
