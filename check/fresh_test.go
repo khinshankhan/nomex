@@ -43,7 +43,7 @@ func TestFreshUntil(t *testing.T) {
 	}
 }
 
-// Nothing should return a time in the past, or the row stays due forever.
+// a time in the past would leave the row due forever
 func TestFreshUntilIsAlwaysFuture(t *testing.T) {
 	offsets := []time.Duration{
 		-10 * 365 * day, -76 * day, -time.Second,

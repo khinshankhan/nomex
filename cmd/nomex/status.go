@@ -74,7 +74,6 @@ flags:
 	}
 	fmt.Fprintln(os.Stderr)
 
-	// attempts grows without bound, so show it
 	attempts, err := db.CountAttempts(ctx)
 	if err == nil && attempts > 0 {
 		fmt.Fprintf(os.Stderr, "%s recorded failures\n", commas(attempts))

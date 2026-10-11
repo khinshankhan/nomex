@@ -1,13 +1,11 @@
--- Every comparison of a stored timestamp wraps the column in datetime().
--- SQLite compares DATETIME text lexicographically and does not interpret the
--- "-04:00" a non-UTC time carries, so a raw comparison reads a timestamp an
--- hour in the future as hours stale. datetime() parses the offset.
+-- NOTE: stored timestamps are always compared through datetime(). SQLite
+-- compares DATETIME as text and ignores a "-04:00" offset otherwise.
 
 -- name: GetCheck :one
 SELECT * FROM checks WHERE domain = ?;
 
 -- name: UpsertCheck :exec
--- Generated columns are omitted deliberately: naming one is an error.
+-- generated columns can't be named
 INSERT INTO checks (domain, status, fresh_until, priority)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(domain) DO UPDATE SET
@@ -16,24 +14,16 @@ ON CONFLICT(domain) DO UPDATE SET
   priority    = MAX(checks.priority, excluded.priority);
 
 -- name: SeedCheck :execrows
--- OR IGNORE so re-running a narrower seed over a wider one is a no-op per row
--- rather than resetting status or priority on already-checked domains.
---
--- execrows rather than exec: the rows-affected count is 1 for a new row and 0
--- for one that was ignored, which is how the seeder reports what it added
--- without counting the table before and after every batch.
+-- OR IGNORE so reseeding leaves existing rows alone. execrows reports 1 for a
+-- new row and 0 for an existing one.
 INSERT OR IGNORE INTO checks (domain, status, fresh_until, priority)
 VALUES (?, 'unchecked', ?, ?);
 
 -- name: Progress :many
--- How far the sweep has got, per suffix.
---
--- Also answers whether DNS-in-front would pay for a given TLD: it is worth
--- doing only where most candidates are registered, and this reports that ratio
--- from real data rather than a sample.
+-- how far the sweep has got, per suffix
 SELECT
   suffix,
-  -- CAST because sqlc types a bare SUM() of a boolean as *float64.
+  -- CAST, sqlc types a bare SUM() of a boolean as *float64
   COUNT(*)                                                    AS total,
   CAST(SUM(status = 'unchecked') AS INTEGER)                  AS unchecked,
   CAST(SUM(status = 'registered') AS INTEGER)                 AS registered,
@@ -52,15 +42,11 @@ INSERT INTO attempts (domain, attempted_at, error_kind, retryable, retry_after)
 VALUES (?, ?, ?, ?, ?);
 
 -- name: BlockDomain :exec
--- Only for the three kinds that describe the domain: ErrNoServer,
--- ErrInvalidQuery, ErrRefused. Everything else goes to attempts.
 INSERT INTO blocked (domain, reason, blocked_at)
 VALUES (?, ?, ?)
 ON CONFLICT(domain) DO UPDATE SET reason = excluded.reason, blocked_at = excluded.blocked_at;
 
 -- name: DeferCheck :exec
--- Push a row past a failure so the sweep stops returning it. This is what
--- stands in for consulting attempts.retry_after in the scheduler query.
 UPDATE checks SET fresh_until = ? WHERE domain = ?;
 
 -- name: PruneAttempts :execrows
@@ -70,7 +56,7 @@ DELETE FROM attempts WHERE datetime(attempted_at) < datetime(CAST(sqlc.arg(befor
 SELECT * FROM attempts WHERE domain = ? ORDER BY attempted_at DESC LIMIT ?;
 
 -- name: UpsertCheckResult :exec
--- The full result path. Generated columns are omitted: naming one is an error.
+-- generated columns can't be named
 INSERT INTO checks (domain, status, source, checked_at, fresh_until,
                     expiration, registered_at, server, stale)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -85,8 +71,6 @@ ON CONFLICT(domain) DO UPDATE SET
   stale         = excluded.stale;
 
 -- name: CountRecentFailures :one
--- Drives the backoff exponent. Bounded by time rather than counting the whole
--- history, so a domain that failed last year starts fresh.
 SELECT COUNT(*) FROM attempts
 WHERE domain = ? AND datetime(attempted_at) > datetime(CAST(sqlc.arg(since) AS TEXT));
 
@@ -94,18 +78,13 @@ WHERE domain = ? AND datetime(attempted_at) > datetime(CAST(sqlc.arg(since) AS T
 SELECT EXISTS (SELECT 1 FROM blocked WHERE domain = ?);
 
 -- name: ListChecks :many
--- The report query. Every filter is optional: passing the zero value for one
--- disables it, so "everything available" and "four-letter .dev that is not
--- taken" are the same query.
---
--- Deliberately not using idx_checks_filter -- a leading OR defeats it. This is
--- a human-triggered report over a table the sweep touches constantly, so a scan
--- is the right trade against maintaining several near-identical queries.
+-- every filter is optional, a zero value disables it
+-- NOTE: the ORs mean it scans rather than using idx_checks_filter, fine for a
+-- report
 SELECT domain, status, checked_at, fresh_until, expiration,
        datetime(fresh_until) < datetime('now') AS stale
 FROM checks
--- CAST so sqlc can infer a type: through a bare OR comparison it gives up and
--- generates interface{}.
+-- CAST, or sqlc generates interface{} through the OR
 WHERE (CAST(sqlc.arg(status) AS TEXT)      = '' OR status    = sqlc.arg(status))
   AND (CAST(sqlc.arg(suffix) AS TEXT)      = '' OR suffix    = sqlc.arg(suffix))
   AND (CAST(sqlc.arg(label_len) AS INTEGER) = 0 OR label_len = sqlc.arg(label_len))
@@ -121,15 +100,11 @@ INSERT INTO servers (origin, last_success, consecutive_failures)
 VALUES (?, ?, 0)
 ON CONFLICT(origin) DO UPDATE SET
   last_success         = excluded.last_success,
-  -- A success clears the streak and any throttle: the server is answering.
   consecutive_failures = 0,
   rate_limited_until   = NULL;
 
 -- name: RecordServerFailure :exec
--- rate_limited_until is only extended, never shortened: a later failure with no
--- Retry-After must not cancel a longer wait the server explicitly asked for.
--- NULLIF so two NULLs stay NULL rather than an empty string, which no reader
--- can parse.
+-- rate_limited_until only ever grows. NULLIF keeps two NULLs NULL, not ''
 INSERT INTO servers (origin, last_failure, consecutive_failures, rate_limited_until)
 VALUES (?, ?, 1, ?)
 ON CONFLICT(origin) DO UPDATE SET
@@ -141,20 +116,12 @@ ON CONFLICT(origin) DO UPDATE SET
   ), '');
 
 -- name: ThrottledServers :many
--- Origins that asked us to wait, so the sweeper can skip their domains rather
--- than spending its rate budget on guaranteed failures.
 SELECT origin, rate_limited_until FROM servers
 WHERE rate_limited_until IS NOT NULL
   AND datetime(rate_limited_until) > datetime('now');
 
 -- name: DueSuffixes :many
--- Which suffixes have work, most-starved first.
---
--- The sweep claims per suffix rather than globally: one shared batch ordered by
--- queued_at interleaves suffixes, so workers holding a fast registry's domains
--- idle while the batch drains of a slow one's. Measured across three TLDs, that
--- paced every registry to the slowest -- .com ran at .dev's rate rather than
--- ten times it.
+-- suffixes with work, most due first
 SELECT suffix, COUNT(*) AS due
 FROM checks c
 WHERE datetime(c.fresh_until) < datetime('now')
@@ -163,14 +130,9 @@ GROUP BY suffix
 ORDER BY due DESC;
 
 -- name: DueChecksForSuffix :many
--- Work is a staleness query: fresh_until in the past means "check this".
---
--- blocked is excluded here rather than by deleting the row, so a domain that
--- becomes servable again (a new RDAP endpoint published for its suffix) needs
--- one DELETE rather than a re-seed.
---
--- retry_after is deliberately NOT consulted, since it can't use the ordering
--- index. The writer pushes fresh_until past the retry instant instead.
+-- due rows for one suffix, live requests first then oldest
+-- NOTE: failures defer fresh_until instead of the query reading retry_after,
+-- which can't use the index
 SELECT domain FROM checks c
 WHERE c.suffix = ?
   AND datetime(c.fresh_until) < datetime('now')

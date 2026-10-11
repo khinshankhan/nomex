@@ -1,8 +1,5 @@
 // Package gather generates candidate domains and seeds them into the database.
-//
-// Seeding is separate from checking. Writing rows is fast (~57k rows/sec, so
-// the full 1-5 character space across three TLDs takes about eleven minutes),
-// while checking is bound by registry rate limits and takes months.
+// Seeding runs at about 57k rows/sec, checking is what takes months.
 package gather
 
 import (
@@ -11,13 +8,12 @@ import (
 	"strings"
 )
 
-// Alphabet is the default label alphabet, lowercase ASCII only. Digits and
-// hyphens are legal but left out by default since they blow up the space (a
-// 5 character label goes from 11.9M to 60M) for less interesting names.
+// Alphabet is the default label alphabet. Digits and hyphens are left out, they
+// take 5 character labels from 11.9M to 60M.
 const Alphabet = "abcdefghijklmnopqrstuvwxyz"
 
-// Spec describes a candidate space: every label of length MinLen..MaxLen over
-// Alphabet, joined to each TLD.
+// Spec is every label of length MinLen..MaxLen over Alphabet, joined to each
+// TLD.
 type Spec struct {
 	TLDs     []string
 	MinLen   int
@@ -39,9 +35,7 @@ func (s Spec) Validate() error {
 		return fmt.Errorf("max length %d: a DNS label is at most 63 characters", s.MaxLen)
 	}
 
-	// reject anything that isn't legal in a hostname label
-	// NOTE: RDAP rejects those as ErrInvalidQuery, which blocks the domain, so
-	// a typo here would permanently block a slice of the namespace
+	// NOTE: RDAP would block an illegal label for good
 	for _, r := range s.alphabet() {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
@@ -69,12 +63,11 @@ func (s Spec) alphabet() string {
 	return Alphabet
 }
 
-// MaxCount caps a spec's size, above it Count would overflow int64. For scale,
-// the full 1-5 character space across three TLDs is 37 million.
+// MaxCount caps a spec's size, well short of overflowing int64. All 1-5
+// character labels across three TLDs is 37 million.
 const MaxCount = int64(1) << 40 // ~1.1 trillion
 
-// Count returns how many candidates All will yield, or an error if the space is
-// too large. Each extra character is 26x the work, so check before a big run.
+// Count returns how many candidates All yields, or an error past MaxCount.
 func (s Spec) Count() (int64, error) {
 	alpha := int64(len(s.alphabet()))
 	tlds := int64(len(s.TLDs))
@@ -97,9 +90,8 @@ func (s Spec) Count() (int64, error) {
 	return total * tlds, nil
 }
 
-// All yields every candidate, shortest labels first since those are the
-// interesting ones. Within a length the order is lexicographic, so a resumed
-// run repeats the same sequence and OR IGNORE skips what already landed.
+// All yields every candidate, shortest first, then in lexicographic order so a
+// resumed run repeats the same sequence.
 func (s Spec) All() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		alpha := s.alphabet()

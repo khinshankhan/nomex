@@ -8,15 +8,11 @@ import (
 	"net/http"
 )
 
-// wrapper is the embedded base for every ResponseWriter this package wraps.
+// wrapper is the base for every ResponseWriter this package wraps. It keeps the
+// optional interfaces a bare embedded http.ResponseWriter drops.
 //
-// A bare struct{ http.ResponseWriter } drops the optional interfaces, which
-// breaks streaming and upgrades. Unwrap matters most since
-// http.ResponseController walks it, without it SetWriteDeadline returns
-// "feature not supported".
-//
-// NOTE: a downstream w.(http.Hijacker) now always succeeds and fails at call
-// time with ErrNotSupported instead. Prefer http.ResponseController.
+// NOTE: w.(http.Hijacker) now always succeeds and fails at call time instead.
+// Prefer http.ResponseController.
 type wrapper struct {
 	http.ResponseWriter
 }
@@ -46,8 +42,7 @@ func (w *wrapper) Push(target string, opts *http.PushOptions) error {
 	return fmt.Errorf("push: %w", http.ErrNotSupported)
 }
 
-// ReadFrom keeps io.Copy on the fast path (sendfile where available) instead of
-// a buffered loop through Write.
+// ReadFrom keeps io.Copy on the fast path, sendfile where available.
 func (w *wrapper) ReadFrom(r io.Reader) (int64, error) {
 	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
 		return rf.ReadFrom(r)

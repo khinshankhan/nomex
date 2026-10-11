@@ -12,12 +12,10 @@ import (
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
-// Names turns chosen names into domains. A bare label ("matterwave") is joined
-// to each TLD, and a name with a suffix ("matterwave.dev") is taken as is.
-// Input is lowercased and deduplicated, keeping input order.
+// Names turns chosen names into domains. A bare label is joined to each TLD, a
+// name with a suffix is kept as is. Lowercased and deduplicated, in order.
 //
-// NOTE: labels are validated here since a malformed name fails RDAP as
-// ErrInvalidQuery, which would block it permanently.
+// NOTE: validated here, RDAP would block a malformed name for good.
 func Names(names []string, tlds []string) ([]string, error) {
 	for _, tld := range tlds {
 		if err := validLabel(tld); err != nil {
@@ -77,9 +75,8 @@ func ReadNames(r io.Reader) ([]string, error) {
 	return out, nil
 }
 
-// SeedDomains writes the given domains that aren't already present, due
-// immediately, and returns how many were inserted. Existing rows are left
-// alone, same as Seed.
+// SeedDomains writes the domains that aren't already present, due now, and
+// returns how many were new.
 func SeedDomains(ctx context.Context, db *data.DB, domains []string, priority int64) (int64, error) {
 	due := sqltime.At(time.Now().Add(-time.Minute))
 
@@ -96,8 +93,8 @@ func SeedDomains(ctx context.Context, db *data.DB, domains []string, priority in
 	return inserted, nil
 }
 
-// validLabel applies the hostname rules: 1-63 characters of a-z, 0-9 and '-',
-// not starting or ending with a hyphen.
+// validLabel applies the hostname rules: 1-63 of a-z, 0-9 and '-', no hyphen
+// at either end.
 func validLabel(label string) error {
 	switch {
 	case label == "":

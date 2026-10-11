@@ -9,11 +9,9 @@ import (
 )
 
 // BlackHole replaces the mux's default 404 body under the given path prefixes.
-// A prefix covers itself and everything under it: "/api" matches "/api",
-// "/api/" and "/api/x", but not "/apifoo".
+// "/api" covers "/api", "/api/" and "/api/x", not "/apifoo".
 //
-// NOTE: this wraps the response instead of adding a catchall route.
-// "/api/{path...}" matches any method, so the mux would never return a 405.
+// NOTE: a catchall route would match any method, so the mux would never 405.
 func BlackHole(prefixes ...string) Middleware {
 	cleaned := make([]string, 0, len(prefixes))
 	for _, p := range prefixes {
@@ -23,8 +21,7 @@ func BlackHole(prefixes ...string) Middleware {
 	}
 
 	return func(next http.Handler) http.Handler {
-		// only a ServeMux can say whether a route exists before dispatch, which
-		// separates an unrouted path from a handler's own 404
+		// only a ServeMux can tell an unrouted path from a handler's own 404
 		mux, ok := next.(*http.ServeMux)
 		if !ok {
 			return next
@@ -36,8 +33,7 @@ func BlackHole(prefixes ...string) Middleware {
 				return
 			}
 
-			// empty pattern means nothing matched, but that includes a method
-			// mismatch, so dispatch decides between 404 and 405
+			// no pattern also covers a method mismatch, dispatch picks 404 or 405
 			if _, pattern := mux.Handler(r); pattern != "" {
 				next.ServeHTTP(w, r)
 				return
@@ -47,8 +43,7 @@ func BlackHole(prefixes ...string) Middleware {
 			next.ServeHTTP(bw, r)
 
 			if bw.swallowed {
-				// structured since the path can contain newlines that would
-				// forge log lines
+				// structured, a path with newlines could forge log lines
 				logx.Default().Named("blackhole").Info("no route",
 					fields.String("method", r.Method),
 					fields.String("path", r.URL.Path))
@@ -77,7 +72,7 @@ type blackHoleWriter struct {
 func (w *blackHoleWriter) WriteHeader(code int) {
 	w.wroteHeader = true
 
-	// a 405 carries Allow and a 404 never does, only the 404 is ours
+	// a 405 carries Allow, a 404 never does
 	if code == http.StatusNotFound && w.Header().Get("Allow") == "" {
 		w.swallowed = true
 		return
@@ -91,7 +86,7 @@ func (w *blackHoleWriter) Write(b []byte) (int, error) {
 		w.WriteHeader(http.StatusOK)
 	}
 	if w.swallowed {
-		// discard "404 page not found", reporting success to avoid a short write
+		// discard "404 page not found", report success to avoid a short write
 		return len(b), nil
 	}
 	return w.ResponseWriter.Write(b)

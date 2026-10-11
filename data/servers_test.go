@@ -9,8 +9,6 @@ import (
 	"github.com/khinshankhan/nomex/check"
 )
 
-// A rate limit belongs to the server, so RecordServer decides how long every
-// domain on it waits.
 func TestRecordServer(t *testing.T) {
 	const origin = "https://rdap.example"
 
@@ -34,7 +32,7 @@ func TestRecordServer(t *testing.T) {
 		{"success", []check.Result{ok}, 0, 0},
 		{"retry-after is honoured", []check.Result{retryAfter(10 * time.Minute)}, 1, 10 * time.Minute},
 		{"bare 429 starts at 5m", []check.Result{bare429}, 1, 5 * time.Minute},
-		// two failures already on the streak, so 5m doubled twice
+		// two failures already, 5m doubled twice
 		{"bare 429 backs off by streak", []check.Result{permanent, permanent, bare429}, 3, 20 * time.Minute},
 		{"permanent failure doesn't throttle", []check.Result{permanent, permanent}, 2, 0},
 		{"a wait is never shortened", []check.Result{retryAfter(time.Hour), retryAfter(time.Minute)}, 2, time.Hour},
@@ -79,7 +77,6 @@ func TestRecordServer(t *testing.T) {
 	}
 }
 
-// Nothing answered, so there's no server to blame.
 func TestRecordServerWithoutOrigin(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()

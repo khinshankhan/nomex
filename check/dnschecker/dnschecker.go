@@ -1,16 +1,10 @@
 // Package dnschecker checks domain registration with DNS.
 //
-// DNS only works in one direction. Nameserver records prove a domain is
-// registered, but no records proves nothing since parked, expired and
-// undelegated domains are common. So a miss is StatusUnknown, not
-// StatusNotFound, and RDAP still has to be asked.
+// DNS only proves the positive: nameservers mean registered, but no records
+// proves nothing, so a miss is StatusUnknown. It saves RDAP queries on dense
+// suffixes (1-2 character .com and .net are all taken, .dev about 5%).
 //
-// It saves RDAP queries on taken domains, so it pays off on dense suffixes. On
-// this database .com and .net at 1-2 characters are 100% registered and .dev
-// is 5%.
-//
-// NOTE: a DNS answer has no expiry, so the row gets the default TTL and comes
-// back for a full RDAP check later.
+// NOTE: a DNS answer has no expiry, so the row gets the default TTL.
 package dnschecker
 
 import (
@@ -22,13 +16,10 @@ import (
 	"github.com/khinshankhan/nomex/check"
 )
 
-// DefaultTimeout bounds a single lookup. Measured latency was 178-410ms, so
-// this leaves room for a slow resolver without letting a hung one hold a
-// worker.
+// DefaultTimeout bounds a single lookup. Measured latency was 178-410ms.
 const DefaultTimeout = 5 * time.Second
 
-// lookupFunc is the nameserver lookup, swappable so tests don't need a network.
-// net.Resolver's Dial hook can only supply a transport, not fake results.
+// lookupFunc is the nameserver lookup, swappable for tests.
 type lookupFunc func(ctx context.Context, domain string) ([]*net.NS, error)
 
 // Checker resolves domains against DNS.
@@ -75,15 +66,11 @@ func (c *Checker) Source() string {
 	return "dns"
 }
 
-// Check looks up nameservers for domain. There are three outcomes:
+// Check looks up nameservers for domain:
 //
-//   - records exist: StatusRegistered, no expiry
-//   - authoritative "no": StatusUnknown, since DNS can't see a registered
-//     domain that isn't delegated
+//   - records exist: StatusRegistered
+//   - authoritative no: StatusUnknown
 //   - lookup failed: StatusUnknown with a retryable error
-//
-// The last two only differ in Err. A not-found is a real (if useless) answer,
-// a resolver failure is no answer at all and must not be stored as one.
 func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 	if c.timeout > 0 {
 		var cancel context.CancelFunc
@@ -97,8 +84,7 @@ func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 		Status: check.StatusUnknown,
 	}
 
-	// NS instead of host records: a registered domain may have no addresses
-	// but needs nameservers to be delegated
+	// NS, not host records, a delegated domain may have no addresses
 	ns, err := c.lookup(ctx, domain)
 	switch {
 	case err == nil && len(ns) > 0:
@@ -106,18 +92,13 @@ func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 		return out
 
 	case err == nil:
-		// no error and no records, nothing to conclude
 		return out
 
 	case isNotFound(err):
-		// authoritative "does not resolve", still not "available" (see the
-		// package comment)
+		// doesn't resolve, but could still be registered
 		return out
 
 	default:
-		// a resolver failure establishes nothing, so retry later
-		// NOTE: the old code returned a 500 here and stored it with the real
-		// results
 		out.Err = err
 		out.ErrKind = errKind(err)
 		out.Retryable = true
@@ -125,7 +106,7 @@ func (c *Checker) Check(ctx context.Context, domain string) check.Result {
 	}
 }
 
-// isNotFound reports an authoritative negative, as opposed to a failure.
+// isNotFound reports an authoritative negative rather than a failure.
 func isNotFound(err error) bool {
 	var dnsErr *net.DNSError
 	return errors.As(err, &dnsErr) && dnsErr.IsNotFound

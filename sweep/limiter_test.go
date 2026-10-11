@@ -9,15 +9,15 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// One registry's traffic shouldn't spend another's budget, and a token that
-// can't arrive before the deadline is refused up front rather than waited for.
+// servers don't share a budget, and a token that can't arrive before the
+// deadline is refused up front
 func TestLimiterWait(t *testing.T) {
 	const (
 		google   = "https://pubapi.registry.google"
 		verisign = "https://rdap.verisign.com"
 	)
 
-	// an hour per token, so a second token never arrives within the test
+	// an hour per token, so a second never arrives
 	lims := newLimiters(Limits{Every: time.Hour, Burst: 1})
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
@@ -34,13 +34,12 @@ func TestLimiterWait(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("second google token: err = %v, want DeadlineExceeded", err)
 	}
-	// still live means it refused right away instead of sleeping to the deadline
+	// still live means it didn't sleep to the deadline
 	if ctx.Err() != nil {
 		t.Error("wait slept until the deadline before refusing")
 	}
 }
 
-// Without a deadline there's nothing to refuse against, so wait waits.
 func TestLimiterWaitsWithoutDeadline(t *testing.T) {
 	lims := newLimiters(Limits{Every: time.Millisecond, Burst: 1})
 
@@ -51,8 +50,7 @@ func TestLimiterWaitsWithoutDeadline(t *testing.T) {
 	}
 }
 
-// A measured registry gets its own budget instead of the default, but an
-// explicit -rate wins over both.
+// a measured budget beats the default, an explicit -rate beats both
 func TestLimiterBudgets(t *testing.T) {
 	tests := []struct {
 		name      string

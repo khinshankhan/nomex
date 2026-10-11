@@ -1,8 +1,5 @@
-// Package sweep works through the queue: pull domains whose answers have gone
-// stale, check them, and write the results back.
-//
-// It never really finishes. 37 million candidates at a few queries a second is
-// months, and early rows expire before the late ones are reached.
+// Package sweep checks domains whose answers have gone stale and stores the
+// results.
 package sweep
 
 import (
@@ -22,43 +19,35 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Defaults lean polite over fast. Google's .dev registry returned 429 after 10
-// queries at 2/sec, so DefaultLimits starts at one per second.
 const (
 	DefaultWorkers = 4
 	DefaultBatch   = 100
 
-	// idleDelay is how long to wait when nothing is due.
+	// how long to wait when nothing is due
 	idleDelay = 30 * time.Second
 
-	// failureWindow bounds how far back consecutive failures are counted for
-	// backoff, so a domain that failed last year starts fresh.
+	// failures older than this don't count toward backoff
 	failureWindow = 7 * 24 * time.Hour
 
-	// AttemptRetention is how long a failure is kept. Attempts are only for
-	// debugging, and a throttled registry piles them up fast (a live run
-	// recorded 6 from 16 checks).
+	// AttemptRetention is how long failed attempts are kept.
 	AttemptRetention = 30 * 24 * time.Hour
 
-	// pruneEvery is how often old attempts get pruned.
 	pruneEvery = time.Hour
 )
 
 // Options configures a sweep.
 type Options struct {
-	// Limits is the rate budget per server. Each origin gets its own so a
-	// slow registry doesn't hold up a fast one.
+	// Limits is the rate budget for each server.
 	Limits Limits
 
-	// MaxAttempts bounds retries per domain within one sweep. Zero means
-	// DefaultMaxAttempts.
+	// MaxAttempts bounds tries per domain. Zero means DefaultMaxAttempts.
 	MaxAttempts int
 
-	// Workers is how many checks run concurrently. More workers don't raise
-	// the rate, they just hide latency.
+	// Workers is how many checks run at once per suffix. It hides latency, it
+	// doesn't raise the rate.
 	Workers int
 
-	// Batch is how many due domains to claim per round.
+	// Batch is how many due domains to claim at a time.
 	Batch int
 
 	// Limit stops after this many checks. Zero runs until the context ends.
@@ -70,14 +59,12 @@ type Options struct {
 	// Progress, if set, is called after each result is stored.
 	Progress func(Stat)
 
-	// PreCheck, if set, runs before the main checker and short-circuits when
-	// it finds a domain registered. Meant for DNS, which is only worth it on
-	// dense suffixes (see dnschecker). Its failures are ignored since the real
-	// checker runs next anyway.
+	// PreCheck, if set, runs first and skips the main checker when it finds a
+	// domain registered. Meant for DNS.
 	PreCheck check.Checker
 
-	// Origins, if set, maps a domain to its RDAP server so throttled servers
-	// can be skipped without spending a query.
+	// Origins, if set, maps a domain to its server so throttled servers are
+	// skipped without a query.
 	Origins OriginResolver
 }
 
@@ -109,8 +96,8 @@ type Stat struct {
 	Done    int64
 	Elapsed time.Duration
 
-	// Skipped means the domain's registry is throttled and no query was sent.
-	// It doesn't count against Limit.
+	// Skipped means the server was throttled and nothing was sent. It doesn't
+	// count against Limit.
 	Skipped bool
 }
 
@@ -122,14 +109,12 @@ type sweeper struct {
 	lims    *limiters
 	start   time.Time
 
-	// throttled is reloaded each round, between pipelines
+	// reloaded each round
 	throttled *throttles
 
-	// done is shared by every pipeline's workers
 	done atomic.Int64
 
-	// claimed counts checks started, so Limit holds with several workers
-	// mid-check
+	// checks started, so Limit holds with workers mid-check
 	claimed atomic.Int64
 }
 
@@ -159,8 +144,7 @@ func (s *sweeper) claim() bool {
 func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) (int64, error) {
 	s := newSweeper(db, checker, opts)
 
-	// prune at startup, then hourly, so retention just happens whenever the
-	// sweep runs
+	// prune at startup, then hourly
 	log := logx.Default().Named("sweep")
 
 	lastPrune := time.Now()
@@ -199,7 +183,7 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 			continue
 		}
 
-		// once per round, a stale answer costs at most one wasted query
+		// once per round, a stale entry costs at most one query
 		until, err := db.Throttled(ctx)
 		if err != nil {
 			return s.done.Load(), err
@@ -216,10 +200,8 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 	}
 }
 
-// sweepRound runs one pipeline per suffix, concurrently, so each drains at its
-// own registry's pace instead of sharing a batch with a slow one.
-//
-// One pipeline failing stops the rest, since a failed claim or write is on us.
+// sweepRound drains each suffix in its own pipeline, so a slow registry doesn't
+// hold up the others. One failing stops the rest.
 func (s *sweeper) sweepRound(ctx context.Context, suffixes []sqlcgen.DueSuffixesRow) error {
 	g, gctx := errgroup.WithContext(ctx)
 	for _, suf := range suffixes {
@@ -233,8 +215,7 @@ func (s *sweeper) sweepRound(ctx context.Context, suffixes []sqlcgen.DueSuffixes
 	return ctx.Err()
 }
 
-// drain keeps claiming batches for suffix until it runs dry, so a fast registry
-// doesn't sit waiting on a slow one between rounds.
+// drain claims batches for suffix until none are due.
 func (s *sweeper) drain(ctx context.Context, suffix string) error {
 	for {
 		if ctx.Err() != nil || s.limitReached() {
@@ -256,22 +237,21 @@ func (s *sweeper) drain(ctx context.Context, suffix string) error {
 			return err
 		}
 
-		// Once means one batch per suffix, not one overall
+		// one batch per suffix
 		if s.opts.Once {
 			return nil
 		}
 	}
 }
 
-// round checks one batch of domains across a worker pool. A failed write
-// stops the batch, so the rest isn't checked only for its results to be thrown
-// away.
+// round checks one batch across a worker pool. A failed write stops the
+// batch.
 func (s *sweeper) round(ctx context.Context, domains []string) error {
 	work := make(chan string)
 
 	g, gctx := errgroup.WithContext(ctx)
 	for w := range s.opts.Workers {
-		// separate RNG per worker so they don't all retry at the same instant
+		// own RNG per worker so they don't retry in lockstep
 		backoff := newBackoff(int64(w) * 10_000)
 
 		g.Go(func() error {
@@ -306,12 +286,11 @@ feed:
 	return ctx.Err()
 }
 
-// checkOne checks and stores one domain. An error means a write failed.
+// checkOne checks and stores one domain. It only errors when a write fails.
 func (s *sweeper) checkOne(ctx context.Context, backoff jitter.Strategy, domain string) error {
 	opts := s.opts
 
-	// resolve the server first so a throttled registry is skipped without
-	// spending a token or a query
+	// resolve the server first so a throttled one costs nothing
 	origin := ""
 	if opts.Origins != nil {
 		if o, err := opts.Origins.Origin(ctx, domain); err == nil {
@@ -322,8 +301,7 @@ func (s *sweeper) checkOne(ctx context.Context, backoff jitter.Strategy, domain 
 		if opts.Progress != nil {
 			opts.Progress(Stat{Domain: domain, Origin: origin, Skipped: true})
 		}
-		// push it past the throttle, otherwise it stays due and the next claim
-		// hands back the same rows to skip again
+		// defer past the throttle, otherwise the next claim returns it again
 		if err := s.db.DeferCheck(ctx, sqlcgen.DeferCheckParams{
 			Domain:     domain,
 			FreshUntil: sqltime.At(until),
@@ -337,11 +315,10 @@ func (s *sweeper) checkOne(ctx context.Context, backoff jitter.Strategy, domain 
 		return nil
 	}
 
-	// DNS first if configured, it can only prove "registered" so anything else
-	// falls through to the real checker
+	// DNS can only prove registered, anything else goes to the checker
 	var res check.Result
 	if opts.PreCheck != nil {
-		// no Origin: the RDAP server wasn't asked, so its state shouldn't move
+		// no Origin, the server wasn't asked so its state shouldn't change
 		if pre := opts.PreCheck.Check(ctx, domain); pre.Status == check.StatusRegistered {
 			res = pre
 		}
@@ -357,13 +334,12 @@ func (s *sweeper) checkOne(ctx context.Context, backoff jitter.Strategy, domain 
 
 	err := s.db.StoreResult(ctx, res, failures)
 
-	// per-origin state, so a 429 on one domain covers every domain on that
-	// server
+	// a 429 is about the server, so it holds for all its domains
 	nextTry, serr := s.db.RecordServer(ctx, res)
 	if serr != nil && err == nil {
 		err = serr
 	}
-	// apply it to the rest of this round too, not just the next reload
+	// apply to the rest of this round too
 	s.throttled.extend(res.Origin, nextTry)
 
 	count := s.done.Add(1)
@@ -384,8 +360,7 @@ func (s *sweeper) checkOne(ctx context.Context, backoff jitter.Strategy, domain 
 	return nil
 }
 
-// recentFailures counts failures in the backoff window. It returns zero on
-// error so a failed lookup doesn't inflate the backoff.
+// recentFailures counts failures in the backoff window, or zero if it can't.
 func recentFailures(ctx context.Context, db *data.DB, domain string) int {
 	n, err := db.CountRecentFailures(ctx, sqlcgen.CountRecentFailuresParams{
 		Domain: domain,
@@ -400,7 +375,6 @@ func recentFailures(ctx context.Context, db *data.DB, domain string) int {
 	return int(n)
 }
 
-// pruneCutoff is the retention boundary.
 func pruneCutoff() string {
 	return sqltime.Text(time.Now().Add(-AttemptRetention))
 }
@@ -416,17 +390,13 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// Cancelled reports whether err is just the sweep stopping on request.
+// Cancelled reports whether err is the sweep being stopped.
 func Cancelled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// CheckDomains checks exactly the given domains, once each, through the same
-// pipeline as Run (rate limits, retries, pre-check, throttle skipping) and
-// stores the results the same way.
-//
-// Every domain needs a row already, so seed them first. Limit, Once and Batch
-// are ignored.
+// CheckDomains checks the given domains once each, the same way Run does. Each
+// needs a row already. Limit, Once and Batch are ignored.
 func CheckDomains(ctx context.Context, db *data.DB, checker check.Checker, domains []string, opts Options) (int64, error) {
 	opts.Limit = 0
 	s := newSweeper(db, checker, opts)

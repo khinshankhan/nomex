@@ -57,7 +57,6 @@ func TestReadNamesSkipsBlanksAndComments(t *testing.T) {
 	}
 }
 
-// Seeding a chosen list should leave existing rows alone, same as Seed.
 func TestSeedDomainsIsIncremental(t *testing.T) {
 	db := datatest.Open(t)
 	ctx := t.Context()
@@ -81,7 +80,7 @@ func TestSeedDomainsIsIncremental(t *testing.T) {
 		t.Errorf("rows = %d, want 3", got)
 	}
 
-	// `nomex check` seeds then checks straight away, so they must be due
+	// `nomex check` checks straight after seeding
 	due, err := db.DueChecksForSuffix(ctx, sqlcgen.DueChecksForSuffixParams{Suffix: "com", Limit: 10})
 	if err != nil {
 		t.Fatalf("DueChecksForSuffix: %v", err)

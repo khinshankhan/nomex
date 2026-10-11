@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// A local time shouldn't reach the database with its offset, SQLite compares
-// DATETIME as text and ignores it.
 func TestValueIsAlwaysUTC(t *testing.T) {
 	east := time.FixedZone("UTC+9", 9*3600)
 	west := time.FixedZone("UTC-4", -4*3600)

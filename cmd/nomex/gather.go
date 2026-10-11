@@ -14,9 +14,8 @@ import (
 	"github.com/khinshankhan/nomex/platform/config"
 )
 
-// runGather seeds candidate domains into the database. Existing rows keep their
-// status and priority, so it's fine to widen gradually (two characters, then
-// three).
+// runGather seeds candidate domains. Existing rows are left alone, so a space
+// can be widened gradually.
 func runGather(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("gather", flag.ContinueOnError)
 	dbPath := flags.String("db", config.DB(), "path to the database")
@@ -72,14 +71,13 @@ flags:
 		strings.Join(spec.TLDs, ","), commas(total), spec.MinLen, spec.MaxLen, len(spec.TLDs))
 
 	if *dryRun {
-		// seeding measured ~57k rows/sec, checking is what actually takes time
+		// seeding measured about 57k rows/sec
 		fmt.Fprintf(os.Stderr, "  seeding:  about %v\n", estimate(total, 57_000))
 		fmt.Fprintf(os.Stderr, "  checking: about %v at 3 queries/sec\n", estimate(total, 3))
 		return nil
 	}
 
-	// a big run writes for minutes and gigabytes, and one more character is
-	// 26x, so ask first unless -y
+	// a big run writes for minutes and gigabytes, so ask unless -y
 	if total >= confirmThreshold && !*force {
 		if !confirm(fmt.Sprintf("seed %s candidates (about %s on disk)?", commas(total), diskEstimate(total))) {
 			return fmt.Errorf("cancelled")
@@ -97,7 +95,7 @@ flags:
 		Priority: *priority,
 		Batch:    *batch,
 		Progress: func(p gather.Progress) {
-			// one line a second, not one per batch
+			// once a second
 			if time.Since(lastReport) < time.Second && p.Seen < p.Total {
 				return
 			}
@@ -109,7 +107,7 @@ flags:
 	fmt.Fprintln(os.Stderr)
 
 	if err != nil {
-		// a cancelled run still committed everything up to the last batch
+		// earlier batches are still committed
 		return fmt.Errorf("seeded %s rows before stopping: %w", commas(inserted), err)
 	}
 
@@ -160,12 +158,10 @@ func gatherNames(ctx context.Context, dbPath, from string, tlds []string, priori
 	return nil
 }
 
-// confirmThreshold is where a run stops being cheap. Below it seeding takes
-// seconds and a few hundred megabytes.
+// confirmThreshold is where a run stops being cheap.
 const confirmThreshold = 1_000_000
 
-// confirm asks on stderr and reads a line from stdin. A non-interactive stdin
-// reads EOF, which counts as no, so scripts need -y.
+// confirm asks on stderr and reads a line from stdin. EOF counts as no.
 func confirm(question string) bool {
 	fmt.Fprintf(os.Stderr, "%s [y/N] ", question)
 
@@ -181,8 +177,7 @@ func confirm(question string) bool {
 	}
 }
 
-// diskEstimate reports the approximate database size for n rows, from a
-// measured 177 bytes/row including indexes.
+// diskEstimate is the database size for n rows, at a measured 177 bytes/row.
 func diskEstimate(n int64) string {
 	const bytesPerRow = 177
 	b := float64(n) * bytesPerRow
@@ -213,7 +208,7 @@ func estimate(rows, perSecond int64) time.Duration {
 	return (time.Duration(rows/perSecond) * time.Second).Round(time.Second)
 }
 
-// commas formats n with thousands separators, 1.4M and 37M are easy to misread.
+// commas formats n with thousands separators.
 func commas(n int64) string {
 	s := fmt.Sprintf("%d", n)
 	if n < 0 {

@@ -21,8 +21,8 @@ func (o fixedOrigin) Origin(context.Context, string) (string, error) {
 	return string(o), nil
 }
 
-// A throttled registry's domains should be set aside until it reopens, not
-// re-claimed and re-skipped as fast as the loop can spin.
+// a throttled server's domains wait until it reopens instead of being claimed
+// again straight away
 func TestThrottledDomainsAreDeferred(t *testing.T) {
 	db := datatest.Open(t)
 	ctx := t.Context()
@@ -78,12 +78,11 @@ func TestThrottledDomainsAreDeferred(t *testing.T) {
 	}
 }
 
-// Once a result can't be saved, the rest of the batch shouldn't be sent to the
-// registry only to be thrown away.
+// once a result can't be stored, the rest of the batch isn't checked
 func TestStoreFailureStopsTheBatch(t *testing.T) {
 	db := datatest.Open(t)
 
-	// unseeded, so recording the failed attempt breaks its foreign key
+	// unseeded, so storing the failure breaks a foreign key
 	domains := []string{"a.dev", "b.dev", "c.dev", "d.dev", "e.dev"}
 	checker := newFake(check.Result{Status: check.StatusUnknown, Err: errors.New("refused")})
 
@@ -115,12 +114,11 @@ func seedDue(t *testing.T, db *data.DB, domains ...string) {
 	}
 }
 
-// fast is a limit that never makes a test wait.
+// fast never makes a test wait.
 var fast = Limits{Every: time.Microsecond, Burst: 100}
 
-// DNS can only prove a domain is registered, so anything else still goes to
-// RDAP. A DNS hit never reached the RDAP server, so it says nothing about that
-// server's health.
+// anything DNS can't prove registered goes to RDAP, and a DNS hit leaves the
+// RDAP server's state alone
 func TestPreCheck(t *testing.T) {
 	const origin = "https://rdap.example"
 
@@ -141,8 +139,7 @@ func TestPreCheck(t *testing.T) {
 			db := datatest.Open(t)
 			ctx := t.Context()
 			seedDue(t, db, "a.dev")
-			// a failure streak whose throttle has already lapsed, so nothing
-			// is skipped
+			// a failure streak whose throttle has lapsed
 			if err := db.ThrottleUntil(ctx, origin, time.Now().Add(-time.Minute)); err != nil {
 				t.Fatalf("throttle: %v", err)
 			}
@@ -174,7 +171,6 @@ func TestPreCheck(t *testing.T) {
 	}
 }
 
-// -limit and -once both bound a run that would otherwise keep going.
 func TestRunStops(t *testing.T) {
 	tests := []struct {
 		name string
@@ -182,7 +178,6 @@ func TestRunStops(t *testing.T) {
 		want int64
 	}{
 		{"at the limit", Options{Limit: 2, Workers: 1}, 2},
-		// workers already holding a domain mustn't push it over
 		{"at the limit with several workers", Options{Limit: 2, Workers: 4}, 2},
 		{"after one batch with once", Options{Once: true, Batch: 3, Workers: 1}, 3},
 	}
@@ -213,7 +208,7 @@ func TestRunStops(t *testing.T) {
 	}
 }
 
-// strayChecker answers for a domain that has no row, so storing it fails.
+// strayChecker answers for a domain with no row, so storing it fails.
 type strayChecker struct{}
 
 func (strayChecker) Source() string {
@@ -224,8 +219,6 @@ func (strayChecker) Check(context.Context, string) check.Result {
 	return check.Result{Domain: "ghost.dev", Status: check.StatusUnknown, Err: errors.New("refused")}
 }
 
-// A write that fails is on us, so the sweep stops and says why instead of
-// carrying on.
 func TestRunReturnsStoreErrors(t *testing.T) {
 	db := datatest.Open(t)
 	seedDue(t, db, "a.dev")
@@ -236,8 +229,7 @@ func TestRunReturnsStoreErrors(t *testing.T) {
 	}
 }
 
-// Old attempts are pruned when a sweep starts, but the last month is kept
-// since it drives the backoff.
+// a sweep prunes attempts older than a month when it starts
 func TestRunPrunesOldAttempts(t *testing.T) {
 	db := datatest.Open(t)
 	ctx := t.Context()
@@ -274,7 +266,7 @@ func TestRunPrunesOldAttempts(t *testing.T) {
 	}
 }
 
-// Backoff grows with failures from the last week, older ones don't count.
+// only failures from the last week count toward backoff
 func TestFailureStreakCountsTheLastWeek(t *testing.T) {
 	db := datatest.Open(t)
 	ctx := t.Context()
@@ -300,15 +292,15 @@ func TestFailureStreakCountsTheLastWeek(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCheck: %v", err)
 	}
-	// two failures in the window, so 5m doubled twice
+	// two in the window, 5m doubled twice
 	want := time.Now().Add(20 * time.Minute)
 	if row.FreshUntil.Before(want.Add(-5*time.Second)) || row.FreshUntil.After(want.Add(5*time.Second)) {
 		t.Errorf("deferred to %v, want about %v", row.FreshUntil.Time, want)
 	}
 }
 
-// stalledChecker hangs on .dev until released, like a registry that stopped
-// answering, and answers everything else straight away.
+// stalledChecker hangs on .dev until released and answers everything else
+// straight away.
 type stalledChecker struct {
 	release chan struct{}
 }
@@ -327,15 +319,14 @@ func (c stalledChecker) Check(ctx context.Context, domain string) check.Result {
 	return check.Result{Domain: domain, Status: check.StatusNotFound}
 }
 
-// Each suffix drains through its own pipeline, so a stalled registry can't hold
-// up another one. .dev only answers once every .com domain is done, which
-// deadlocks if the two share workers.
+// a stalled suffix doesn't hold up another. .dev only answers once every .com
+// domain is done, which deadlocks if they share workers
 func TestStalledSuffixDoesNotBlockOthers(t *testing.T) {
 	db := datatest.Open(t)
-	// more .dev due, so it's claimed first and the stall is in front of .com
+	// more .dev due, so it's claimed first
 	seedDue(t, db, "a.dev", "b.dev", "c.dev", "a.com", "b.com")
 
-	// a safety net so a regression fails instead of hanging
+	// so a regression fails instead of hanging
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 

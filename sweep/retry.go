@@ -9,12 +9,11 @@ import (
 	"github.com/khinshankhan/nomex/check"
 )
 
-// DefaultMaxAttempts bounds retries per domain within one sweep. After that the
-// failure is recorded and the row deferred, which beats holding a worker.
+// DefaultMaxAttempts bounds tries per domain. After that the failure is
+// stored and the row deferred.
 const DefaultMaxAttempts = 3
 
-// newBackoff builds a jitter strategy. Each worker gets its own, seeded
-// differently, so they don't all retry at the same instant.
+// newBackoff builds a jitter strategy, seeded so workers differ.
 func newBackoff(seed int64) jitter.Strategy {
 	r := rand.New(rand.NewSource(time.Now().UnixNano() + seed))
 
@@ -24,15 +23,13 @@ func newBackoff(seed int64) jitter.Strategy {
 		Random: r.Int63n,
 	})
 	if err != nil {
-		// only possible with a zero Base or Cap, which are constants here
+		// only on a zero Base or Cap, both constants here
 		panic("sweep: " + err.Error())
 	}
 	return s
 }
 
-// checkWithRetry queries a domain, retrying transient failures. Retrying here
-// matters since otherwise a momentary 429 waits a full backoff cycle. Permanent
-// failures aren't retried, they'd just fail the same way.
+// checkWithRetry queries a domain, retrying failures marked retryable.
 func checkWithRetry(
 	ctx context.Context,
 	checker check.Checker,
@@ -45,8 +42,7 @@ func checkWithRetry(
 
 	for attempt := range maxAttempts {
 		if err := lim.wait(ctx, origin); err != nil {
-			// no token in time, report a retryable failure so the row gets
-			// deferred instead of treated as an answer
+			// no token in time, retryable so the row gets deferred
 			return check.Result{
 				Domain:    domain,
 				Status:    check.StatusUnknown,
@@ -78,8 +74,8 @@ func checkWithRetry(
 		}
 		t.Stop()
 
-		// select picks at random when both are ready, so a zero delay could
-		// retry after cancellation without this
+		// NOTE: select picks at random when both are ready, so a zero delay
+		// could retry after cancellation without this
 		if ctx.Err() != nil {
 			return res
 		}

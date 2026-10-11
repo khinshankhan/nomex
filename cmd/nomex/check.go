@@ -19,9 +19,7 @@ import (
 	"github.com/khinshankhan/nomex/sweep"
 )
 
-// runCheck checks specific names right away. Fresh stored answers are reused
-// instead of re-queried, and everything checked is stored for `nomex list` and
-// the sweep.
+// runCheck checks specific names now, reusing fresh stored answers.
 func runCheck(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
 	dbPath := flags.String("db", config.DB(), "path to the database")
@@ -80,7 +78,6 @@ flags:
 		return err
 	}
 
-	// split into what the database already knows and what needs asking
 	now := time.Now()
 	blocked := make(map[string]bool)
 	var due []string
@@ -107,7 +104,7 @@ flags:
 		failures = make(map[string]string)
 	)
 	if len(due) > 0 {
-		// only needed now, answering from the database queries nobody
+		// only needed when something is queried
 		if err := requireContact(); err != nil {
 			return err
 		}
@@ -152,8 +149,7 @@ flags:
 		}
 	}
 
-	// report in input order, from the database, so fresh and stored answers
-	// look the same
+	// report from the database, so fresh and stored answers look the same
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "DOMAIN\tSTATUS\tCHECKED\tDETAIL")
 	for _, d := range domains {
@@ -173,14 +169,12 @@ flags:
 
 		detail := staleness(row.Stale, row.Expiration)
 		if row.Source != nil && *row.Source == "dns" {
-			// DNS has no dates, say so instead of leaving a blank
 			detail = "via dns, no expiry known"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", d, row.Status, age(now, row.CheckedAt), detail)
 	}
 	w.Flush()
 
-	// cancelled mid-run, some rows are still unchecked
 	if err := ctx.Err(); err != nil {
 		return err
 	}

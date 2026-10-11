@@ -20,12 +20,10 @@ func count(t *testing.T, db *data.DB) int64 {
 	return n
 }
 
-// Widening a space should only add the new candidates.
 func TestSeedIsIncremental(t *testing.T) {
 	db := datatest.Open(t)
 	ctx := context.Background()
 
-	// small alphabet keeps this to a few hundred rows
 	two := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 2, Alphabet: "abcdefgh"}
 	three := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 3, Alphabet: "abcdefgh"}
 
@@ -60,7 +58,6 @@ func TestSeedIsIncremental(t *testing.T) {
 	}
 }
 
-// A checked row should survive re-seeding untouched.
 func TestSeedPreservesExistingRows(t *testing.T) {
 	db := datatest.Open(t)
 	ctx := context.Background()
@@ -99,7 +96,6 @@ func TestSeedPreservesExistingRows(t *testing.T) {
 	}
 }
 
-// Seeded rows should be due right away so the sweep picks them up.
 func TestSeedRowsAreDue(t *testing.T) {
 	db := datatest.Open(t)
 	ctx := context.Background()
@@ -118,7 +114,6 @@ func TestSeedRowsAreDue(t *testing.T) {
 	}
 }
 
-// Cancelling keeps what was committed, so the next run resumes.
 func TestSeedCancellationKeepsProgress(t *testing.T) {
 	db := datatest.Open(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -146,7 +141,6 @@ func TestSeedCancellationKeepsProgress(t *testing.T) {
 		t.Error("cancellation discarded every batch")
 	}
 
-	// a fresh run finishes the job
 	n, err := Seed(context.Background(), db, spec, SeedOptions{Batch: 100})
 	if err != nil {
 		t.Fatalf("resumed seed: %v", err)
@@ -156,8 +150,7 @@ func TestSeedCancellationKeepsProgress(t *testing.T) {
 	}
 }
 
-// The last partial batch is written after the loop, and its failure has to
-// reach the caller, or gather reports rows it never wrote.
+// the last partial batch is written after the loop
 func TestSeedReportsWriteErrors(t *testing.T) {
 	db := datatest.Open(t)
 	db.Close()

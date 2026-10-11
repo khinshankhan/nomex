@@ -23,8 +23,6 @@ type BlockDomainParams struct {
 	BlockedAt sqltime.UTC
 }
 
-// Only for the three kinds that describe the domain: ErrNoServer,
-// ErrInvalidQuery, ErrRefused. Everything else goes to attempts.
 func (q *Queries) BlockDomain(ctx context.Context, arg BlockDomainParams) error {
 	_, err := q.db.ExecContext(ctx, blockDomain, arg.Domain, arg.Reason, arg.BlockedAt)
 	return err
@@ -62,8 +60,6 @@ type CountRecentFailuresParams struct {
 	Since  string
 }
 
-// Drives the backoff exponent. Bounded by time rather than counting the whole
-// history, so a domain that failed last year starts fresh.
 func (q *Queries) CountRecentFailures(ctx context.Context, arg CountRecentFailuresParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countRecentFailures, arg.Domain, arg.Since)
 	var count int64
@@ -80,8 +76,6 @@ type DeferCheckParams struct {
 	Domain     string
 }
 
-// Push a row past a failure so the sweep stops returning it. This is what
-// stands in for consulting attempts.retry_after in the scheduler query.
 func (q *Queries) DeferCheck(ctx context.Context, arg DeferCheckParams) error {
 	_, err := q.db.ExecContext(ctx, deferCheck, arg.FreshUntil, arg.Domain)
 	return err
@@ -101,14 +95,9 @@ type DueChecksForSuffixParams struct {
 	Limit  int64
 }
 
-// Work is a staleness query: fresh_until in the past means "check this".
-//
-// blocked is excluded here rather than by deleting the row, so a domain that
-// becomes servable again (a new RDAP endpoint published for its suffix) needs
-// one DELETE rather than a re-seed.
-//
-// retry_after is deliberately NOT consulted, since it can't use the ordering
-// index. The writer pushes fresh_until past the retry instant instead.
+// due rows for one suffix, live requests first then oldest
+// NOTE: failures defer fresh_until instead of the query reading retry_after,
+// which can't use the index
 func (q *Queries) DueChecksForSuffix(ctx context.Context, arg DueChecksForSuffixParams) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, dueChecksForSuffix, arg.Suffix, arg.Limit)
 	if err != nil {
@@ -146,13 +135,7 @@ type DueSuffixesRow struct {
 	Due    int64
 }
 
-// Which suffixes have work, most-starved first.
-//
-// The sweep claims per suffix rather than globally: one shared batch ordered by
-// queued_at interleaves suffixes, so workers holding a fast registry's domains
-// idle while the batch drains of a slow one's. Measured across three TLDs, that
-// paced every registry to the slowest -- .com ran at .dev's rate rather than
-// ten times it.
+// suffixes with work, most due first
 func (q *Queries) DueSuffixes(ctx context.Context) ([]DueSuffixesRow, error) {
 	rows, err := q.db.QueryContext(ctx, dueSuffixes)
 	if err != nil {
@@ -181,10 +164,8 @@ const getCheck = `-- name: GetCheck :one
 SELECT domain, status, source, checked_at, fresh_until, expiration, registered_at, server, stale, priority, queued_at, suffix, label_len FROM checks WHERE domain = ?
 `
 
-// Every comparison of a stored timestamp wraps the column in datetime().
-// SQLite compares DATETIME text lexicographically and does not interpret the
-// "-04:00" a non-UTC time carries, so a raw comparison reads a timestamp an
-// hour in the future as hours stale. datetime() parses the offset.
+// NOTE: stored timestamps are always compared through datetime(). SQLite
+// compares DATETIME as text and ignores a "-04:00" offset otherwise.
 func (q *Queries) GetCheck(ctx context.Context, domain string) (Check, error) {
 	row := q.db.QueryRowContext(ctx, getCheck, domain)
 	var i Check
@@ -246,15 +227,10 @@ type ListChecksRow struct {
 	Stale      bool
 }
 
-// The report query. Every filter is optional: passing the zero value for one
-// disables it, so "everything available" and "four-letter .dev that is not
-// taken" are the same query.
-//
-// Deliberately not using idx_checks_filter -- a leading OR defeats it. This is
-// a human-triggered report over a table the sweep touches constantly, so a scan
-// is the right trade against maintaining several near-identical queries.
-// CAST so sqlc can infer a type: through a bare OR comparison it gives up and
-// generates interface{}.
+// every filter is optional, a zero value disables it
+// NOTE: the ORs mean it scans rather than using idx_checks_filter, fine for a
+// report
+// CAST, or sqlc generates interface{} through the OR
 func (q *Queries) ListChecks(ctx context.Context, arg ListChecksParams) ([]ListChecksRow, error) {
 	rows, err := q.db.QueryContext(ctx, listChecks,
 		arg.Status,
@@ -294,7 +270,7 @@ func (q *Queries) ListChecks(ctx context.Context, arg ListChecksParams) ([]ListC
 const progress = `-- name: Progress :many
 SELECT
   suffix,
-  -- CAST because sqlc types a bare SUM() of a boolean as *float64.
+  -- CAST, sqlc types a bare SUM() of a boolean as *float64
   COUNT(*)                                                    AS total,
   CAST(SUM(status = 'unchecked') AS INTEGER)                  AS unchecked,
   CAST(SUM(status = 'registered') AS INTEGER)                 AS registered,
@@ -316,11 +292,7 @@ type ProgressRow struct {
 	Due        int64
 }
 
-// How far the sweep has got, per suffix.
-//
-// Also answers whether DNS-in-front would pay for a given TLD: it is worth
-// doing only where most candidates are registered, and this reports that ratio
-// from real data rather than a sample.
+// how far the sweep has got, per suffix
 func (q *Queries) Progress(ctx context.Context) ([]ProgressRow, error) {
 	rows, err := q.db.QueryContext(ctx, progress)
 	if err != nil {
@@ -444,10 +416,7 @@ type RecordServerFailureParams struct {
 	RateLimitedUntil *sqltime.UTC
 }
 
-// rate_limited_until is only extended, never shortened: a later failure with no
-// Retry-After must not cancel a longer wait the server explicitly asked for.
-// NULLIF so two NULLs stay NULL rather than an empty string, which no reader
-// can parse.
+// rate_limited_until only ever grows. NULLIF keeps two NULLs NULL, not ”
 func (q *Queries) RecordServerFailure(ctx context.Context, arg RecordServerFailureParams) error {
 	_, err := q.db.ExecContext(ctx, recordServerFailure, arg.Origin, arg.LastFailure, arg.RateLimitedUntil)
 	return err
@@ -458,7 +427,6 @@ INSERT INTO servers (origin, last_success, consecutive_failures)
 VALUES (?, ?, 0)
 ON CONFLICT(origin) DO UPDATE SET
   last_success         = excluded.last_success,
-  -- A success clears the streak and any throttle: the server is answering.
   consecutive_failures = 0,
   rate_limited_until   = NULL
 `
@@ -484,12 +452,8 @@ type SeedCheckParams struct {
 	Priority   int64
 }
 
-// OR IGNORE so re-running a narrower seed over a wider one is a no-op per row
-// rather than resetting status or priority on already-checked domains.
-//
-// execrows rather than exec: the rows-affected count is 1 for a new row and 0
-// for one that was ignored, which is how the seeder reports what it added
-// without counting the table before and after every batch.
+// OR IGNORE so reseeding leaves existing rows alone. execrows reports 1 for a
+// new row and 0 for an existing one.
 func (q *Queries) SeedCheck(ctx context.Context, arg SeedCheckParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, seedCheck, arg.Domain, arg.FreshUntil, arg.Priority)
 	if err != nil {
@@ -526,8 +490,6 @@ type ThrottledServersRow struct {
 	RateLimitedUntil *sqltime.UTC
 }
 
-// Origins that asked us to wait, so the sweeper can skip their domains rather
-// than spending its rate budget on guaranteed failures.
 func (q *Queries) ThrottledServers(ctx context.Context) ([]ThrottledServersRow, error) {
 	rows, err := q.db.QueryContext(ctx, throttledServers)
 	if err != nil {
@@ -567,7 +529,7 @@ type UpsertCheckParams struct {
 	Priority   int64
 }
 
-// Generated columns are omitted deliberately: naming one is an error.
+// generated columns can't be named
 func (q *Queries) UpsertCheck(ctx context.Context, arg UpsertCheckParams) error {
 	_, err := q.db.ExecContext(ctx, upsertCheck,
 		arg.Domain,
@@ -605,7 +567,7 @@ type UpsertCheckResultParams struct {
 	Stale        bool
 }
 
-// The full result path. Generated columns are omitted: naming one is an error.
+// generated columns can't be named
 func (q *Queries) UpsertCheckResult(ctx context.Context, arg UpsertCheckResultParams) error {
 	_, err := q.db.ExecContext(ctx, upsertCheckResult,
 		arg.Domain,

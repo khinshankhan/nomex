@@ -13,7 +13,7 @@ func testMux() *http.ServeMux {
 		w.Write([]byte("ok"))
 	}
 	mux.HandleFunc("GET /api/healthz", ok)
-	// a real route that just happens to start with the prefix
+	// a real route that starts with the prefix
 	mux.HandleFunc("GET /apidocs", ok)
 	return mux
 }
@@ -36,8 +36,6 @@ func TestBlackHole(t *testing.T) {
 			wantStatus: 200, wantBody: "ok",
 		},
 		{
-			// why this wraps the response instead of using a catchall, which
-			// would answer 404 here
 			name: "method mismatch still gets 405", method: "POST", path: "/api/healthz",
 			wantStatus: 405, wantAllow: "GET, HEAD",
 		},
@@ -89,7 +87,7 @@ func TestBlackHole(t *testing.T) {
 	}
 }
 
-// A handler's own 404 should pass through untouched.
+// a handler's own 404 passes through
 func TestBlackHoleKeepsHandler404(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/domains/{domain}", func(w http.ResponseWriter, r *http.Request) {

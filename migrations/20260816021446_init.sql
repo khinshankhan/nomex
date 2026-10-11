@@ -1,102 +1,74 @@
 -- +goose Up
 
--- Nullable columns omit the NULL keyword: sqlc's SQLite parser generates
--- interface{} instead of *time.Time when it is present.
+-- NOTE: nullable columns omit NULL, sqlc's SQLite parser generates interface{}
+-- instead of *time.Time with it.
 
--- checks is the cache and the queue. Work is a staleness query -- an unchecked
--- domain is a row with fresh_until in the past, same as a lapsed result -- so
--- one code path serves both and resuming a sweep is free.
+-- checks is the cache and the queue. An unchecked domain and a lapsed answer
+-- are both a row with fresh_until in the past.
 CREATE TABLE checks (
-  -- NOT NULL because a non-INTEGER PRIMARY KEY accepts NULL in SQLite.
+  -- a non-INTEGER PRIMARY KEY accepts NULL in SQLite
   domain        TEXT NOT NULL PRIMARY KEY,
-  -- CHECK rather than a comment: a typo becomes a write error instead of a
-  -- fifth status that nothing queries and nobody notices.
   status        TEXT NOT NULL CHECK (status IN ('unchecked','registered','not_found','unknown')),
   source        TEXT CHECK (source IS NULL OR source IN ('dns','rdap','both')),
   checked_at    DATETIME,
-  -- past means "work to do"
+  -- past means due
   fresh_until   DATETIME NOT NULL,
   -- RDAP expiration event
   expiration    DATETIME,
   registered_at DATETIME,
-  -- full answering URL, for provenance. see servers.origin
+  -- full answering URL, see servers.origin
   server        TEXT,
-  -- rdap.Result.Stale: bootstrap registry could not be refreshed
+  -- bootstrap registry couldn't be refreshed
   stale         BOOLEAN NOT NULL DEFAULT 0,
   -- 100 live request | 50 expiring soon | 10 manual boost | 0 background sweep
   priority      INTEGER NOT NULL DEFAULT 0,
   queued_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-  -- STORED, not VIRTUAL: Postgres supports only STORED. Cannot be added by
-  -- ALTER TABLE, cannot be changed in place, cannot be written to -- so writes
-  -- must list columns explicitly.
-  --
-  -- instr finds the first dot, so foo.co.uk yields co.uk. Hence suffix, not tld.
+  -- STORED since Postgres only supports STORED. Can't be written to, so writes
+  -- list columns explicitly.
+  -- NOTE: the first dot, so foo.co.uk gives co.uk, hence suffix not tld
   suffix    TEXT    GENERATED ALWAYS AS (substr(domain, instr(domain, '.') + 1)) STORED NOT NULL,
   label_len INTEGER GENERATED ALWAYS AS (instr(domain, '.') - 1) STORED NOT NULL
 );
 
--- Scheduler read:
---   SELECT domain FROM checks WHERE datetime(fresh_until) < datetime('now')
---   ORDER BY priority DESC, queued_at ASC LIMIT ?;
---
--- Ordering first, deliberately. Leading with fresh_until gives an indexed range
--- scan but then sorts every due row -- LIMIT does not bound that sort, so with
--- a freshly seeded table (everything due) it degrades with table size:
--- 53ms at 100k rows, 611ms at 2M, and LIMIT 100 costs the same as LIMIT 1000.
---
--- Leading with the ordering lets the scan stop after LIMIT rows. fresh_until
--- becomes a filter during the walk rather than a seek, which measured faster in
--- every case tried, including the steady state where few rows are due:
--- 234us at 2M rows, flat as the table grows.
+-- claim order across all suffixes. Leading with the ordering lets the scan stop
+-- after LIMIT: 234us at 2M rows, against 611ms when it sorts every due row
 CREATE INDEX idx_checks_work ON checks(priority DESC, queued_at, fresh_until);
 
--- Filter read: "four-letter .dev domains that are not taken".
+-- eg four-letter .dev that aren't taken
 CREATE INDEX idx_checks_filter ON checks(suffix, label_len, status);
 
--- Failures land here, not in checks, so a timeout cannot become an answer.
--- That conflation is what banned 42k domains in November.
+-- failures land here, never in checks.status
 CREATE TABLE attempts (
   domain       TEXT NOT NULL REFERENCES checks(domain) ON DELETE CASCADE,
   attempted_at DATETIME NOT NULL,
   -- rdap.ErrorKind
   error_kind   TEXT NOT NULL,
   retryable    BOOLEAN NOT NULL,
-  -- from the server's Retry-After. Recorded for diagnosis only: the scheduler
-  -- reads fresh_until, which the writer pushes past this instant, because
-  -- consulting attempts from the sweep query measured 1460x slower.
+  -- the server's Retry-After, for diagnosis. The sweep reads fresh_until,
+  -- which the writer pushes past it
   retry_after  DATETIME,
   PRIMARY KEY (domain, attempted_at)
 );
 
--- Newest-first per domain: "why did this keep failing" and any retention sweep
--- both read this way, and the primary key sorts attempted_at ascending.
+-- newest first per domain
 CREATE INDEX idx_attempts_recent ON attempts(domain, attempted_at DESC);
 
--- For deleting old rows. attempts grows without bound otherwise -- one row per
--- transient failure, forever -- and at sweep volume becomes the largest table.
+-- for pruning old rows
 CREATE INDEX idx_attempts_age ON attempts(attempted_at);
 
--- Written from an allowlist, NOT from !rdap.IsRetryable(err). Non-retryable
--- also covers ErrUnknown (the zero value), ErrTooManyRedirects,
--- ErrRedirectRefused, ErrRedirectLoop and ErrNotSupported -- all facts about a
--- server, not the domain.
---
--- Only these three describe the domain:
---   ErrNoServer     -- no RDAP server published for this suffix
---   ErrInvalidQuery -- malformed name
---   ErrRefused      -- deliberate rejection; retrying makes it worse
+-- only failures about the domain itself: no RDAP server for the suffix, a
+-- malformed name, or a refusal
+-- NOTE: not every non-retryable error, those also cover server problems
 CREATE TABLE blocked (
   domain     TEXT NOT NULL PRIMARY KEY REFERENCES checks(domain) ON DELETE CASCADE,
   reason     TEXT NOT NULL,
   blocked_at DATETIME NOT NULL
 );
 
--- Per-server throttling state. A rate limit applies to every query against that
--- server, and without somewhere to put it that knowledge dies with the worker.
+-- per-server throttling state, shared by every worker
 CREATE TABLE servers (
-  -- Origin (scheme://host), not the answering URL -- rdap.Result.Server
-  -- includes the object path, which would give one row per domain.
+  -- scheme://host, not the answering URL
   origin               TEXT NOT NULL PRIMARY KEY,
   last_success         DATETIME,
   last_failure         DATETIME,

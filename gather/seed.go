@@ -10,14 +10,12 @@ import (
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
-// DefaultBatch is how many rows are written per transaction, big enough to
-// amortize commits and small enough to not hold the write lock for long.
+// DefaultBatch is rows per transaction.
 const DefaultBatch = 10_000
 
 // SeedOptions configures a seeding run.
 type SeedOptions struct {
-	// Priority for seeded rows. The sweep uses 0, so go negative for bulk
-	// fill that shouldn't outrank regular work.
+	// Priority for seeded rows. The sweep uses 0, negative sorts below it.
 	Priority int64
 
 	// Batch is rows per transaction. Zero means DefaultBatch.
@@ -29,8 +27,7 @@ type SeedOptions struct {
 
 // Progress reports how far a seeding run has got.
 type Progress struct {
-	// Seen is candidates generated so far and Inserted is the ones that were
-	// new. They differ when re-seeding over existing rows.
+	// Seen is candidates generated so far, Inserted the ones that were new.
 	Seen     int64
 	Inserted int64
 	Total    int64
@@ -55,8 +52,7 @@ func (p Progress) Remaining() time.Duration {
 }
 
 // Seed writes every candidate in spec that isn't already present and returns
-// how many rows were inserted. Existing rows keep their status, freshness and
-// priority, so widening a space (2 characters, then 3) doesn't reset anything.
+// how many were new. Existing rows are left alone.
 func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64, error) {
 	if err := spec.Validate(); err != nil {
 		return 0, err
@@ -67,7 +63,7 @@ func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64,
 		batch = DefaultBatch
 	}
 
-	// due immediately, the sweep looks for fresh_until in the past
+	// due now
 	due := sqltime.At(time.Now().Add(-time.Minute))
 
 	total, err := spec.Count()
@@ -104,7 +100,7 @@ func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64,
 
 	for domain := range spec.All() {
 		if err := ctx.Err(); err != nil {
-			// committed batches stay, and a rerun skips what already landed
+			// committed batches stay, a rerun skips them
 			return inserted, err
 		}
 
@@ -124,9 +120,7 @@ func Seed(ctx context.Context, db *data.DB, spec Spec, opts SeedOptions) (int64,
 	return inserted, nil
 }
 
-// insertBatch writes one transaction's worth and returns how many were new,
-// using rows affected per statement (1 inserted, 0 skipped by OR IGNORE)
-// instead of counting the table before and after.
+// insertBatch writes one transaction's worth and returns how many were new.
 func insertBatch(ctx context.Context, db *data.DB, domains []string, due sqltime.UTC, priority int64) (int64, error) {
 	var inserted int64
 
@@ -145,7 +139,6 @@ func insertBatch(ctx context.Context, db *data.DB, domains []string, due sqltime
 		return nil
 	})
 	if err != nil {
-		// rolled back, nothing in this batch landed
 		return 0, err
 	}
 	return inserted, nil

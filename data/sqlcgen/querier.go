@@ -9,79 +9,42 @@ import (
 )
 
 type Querier interface {
-	// Only for the three kinds that describe the domain: ErrNoServer,
-	// ErrInvalidQuery, ErrRefused. Everything else goes to attempts.
 	BlockDomain(ctx context.Context, arg BlockDomainParams) error
 	CountAttempts(ctx context.Context) (int64, error)
 	CountChecks(ctx context.Context) (int64, error)
-	// Drives the backoff exponent. Bounded by time rather than counting the whole
-	// history, so a domain that failed last year starts fresh.
 	CountRecentFailures(ctx context.Context, arg CountRecentFailuresParams) (int64, error)
-	// Push a row past a failure so the sweep stops returning it. This is what
-	// stands in for consulting attempts.retry_after in the scheduler query.
 	DeferCheck(ctx context.Context, arg DeferCheckParams) error
-	// Work is a staleness query: fresh_until in the past means "check this".
-	//
-	// blocked is excluded here rather than by deleting the row, so a domain that
-	// becomes servable again (a new RDAP endpoint published for its suffix) needs
-	// one DELETE rather than a re-seed.
-	//
-	// retry_after is deliberately NOT consulted, since it can't use the ordering
-	// index. The writer pushes fresh_until past the retry instant instead.
+	// due rows for one suffix, live requests first then oldest
+	// NOTE: failures defer fresh_until instead of the query reading retry_after,
+	// which can't use the index
 	DueChecksForSuffix(ctx context.Context, arg DueChecksForSuffixParams) ([]string, error)
-	// Which suffixes have work, most-starved first.
-	//
-	// The sweep claims per suffix rather than globally: one shared batch ordered by
-	// queued_at interleaves suffixes, so workers holding a fast registry's domains
-	// idle while the batch drains of a slow one's. Measured across three TLDs, that
-	// paced every registry to the slowest -- .com ran at .dev's rate rather than
-	// ten times it.
+	// suffixes with work, most due first
 	DueSuffixes(ctx context.Context) ([]DueSuffixesRow, error)
-	// Every comparison of a stored timestamp wraps the column in datetime().
-	// SQLite compares DATETIME text lexicographically and does not interpret the
-	// "-04:00" a non-UTC time carries, so a raw comparison reads a timestamp an
-	// hour in the future as hours stale. datetime() parses the offset.
+	// NOTE: stored timestamps are always compared through datetime(). SQLite
+	// compares DATETIME as text and ignores a "-04:00" offset otherwise.
 	GetCheck(ctx context.Context, domain string) (Check, error)
 	IsBlocked(ctx context.Context, domain string) (bool, error)
-	// The report query. Every filter is optional: passing the zero value for one
-	// disables it, so "everything available" and "four-letter .dev that is not
-	// taken" are the same query.
-	//
-	// Deliberately not using idx_checks_filter -- a leading OR defeats it. This is
-	// a human-triggered report over a table the sweep touches constantly, so a scan
-	// is the right trade against maintaining several near-identical queries.
-	// CAST so sqlc can infer a type: through a bare OR comparison it gives up and
-	// generates interface{}.
+	// every filter is optional, a zero value disables it
+	// NOTE: the ORs mean it scans rather than using idx_checks_filter, fine for a
+	// report
+	// CAST, or sqlc generates interface{} through the OR
 	ListChecks(ctx context.Context, arg ListChecksParams) ([]ListChecksRow, error)
-	// How far the sweep has got, per suffix.
-	//
-	// Also answers whether DNS-in-front would pay for a given TLD: it is worth
-	// doing only where most candidates are registered, and this reports that ratio
-	// from real data rather than a sample.
+	// how far the sweep has got, per suffix
 	Progress(ctx context.Context) ([]ProgressRow, error)
 	PruneAttempts(ctx context.Context, before string) (int64, error)
 	RecentAttempts(ctx context.Context, arg RecentAttemptsParams) ([]Attempt, error)
 	RecordAttempt(ctx context.Context, arg RecordAttemptParams) error
-	// rate_limited_until is only extended, never shortened: a later failure with no
-	// Retry-After must not cancel a longer wait the server explicitly asked for.
-	// NULLIF so two NULLs stay NULL rather than an empty string, which no reader
-	// can parse.
+	// rate_limited_until only ever grows. NULLIF keeps two NULLs NULL, not ''
 	RecordServerFailure(ctx context.Context, arg RecordServerFailureParams) error
 	RecordServerSuccess(ctx context.Context, arg RecordServerSuccessParams) error
-	// OR IGNORE so re-running a narrower seed over a wider one is a no-op per row
-	// rather than resetting status or priority on already-checked domains.
-	//
-	// execrows rather than exec: the rows-affected count is 1 for a new row and 0
-	// for one that was ignored, which is how the seeder reports what it added
-	// without counting the table before and after every batch.
+	// OR IGNORE so reseeding leaves existing rows alone. execrows reports 1 for a
+	// new row and 0 for an existing one.
 	SeedCheck(ctx context.Context, arg SeedCheckParams) (int64, error)
 	ServerState(ctx context.Context, origin string) (Server, error)
-	// Origins that asked us to wait, so the sweeper can skip their domains rather
-	// than spending its rate budget on guaranteed failures.
 	ThrottledServers(ctx context.Context) ([]ThrottledServersRow, error)
-	// Generated columns are omitted deliberately: naming one is an error.
+	// generated columns can't be named
 	UpsertCheck(ctx context.Context, arg UpsertCheckParams) error
-	// The full result path. Generated columns are omitted: naming one is an error.
+	// generated columns can't be named
 	UpsertCheckResult(ctx context.Context, arg UpsertCheckResultParams) error
 }
 

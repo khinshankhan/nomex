@@ -10,14 +10,9 @@ import (
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
-// StoreResult persists one check result:
-//
-//   - an answer updates checks
-//   - a failure about the domain itself writes blocked
-//   - any other failure writes attempts and defers the row
-//
-// A failure never reaches checks.status, so a timeout can't be stored as an
-// answer.
+// StoreResult stores one check result. An answer updates checks. A failure is
+// recorded as an attempt and defers the row, and blocks the domain if it's
+// about the domain itself.
 func (db *DB) StoreResult(ctx context.Context, res check.Result, failures int) error {
 	now := time.Now().UTC()
 
@@ -39,8 +34,6 @@ func (db *DB) StoreResult(ctx context.Context, res check.Result, failures int) e
 	})
 }
 
-// storeFailure records an attempt, blocks the domain if the error is about it,
-// and pushes fresh_until forward so the sweep stops returning the row.
 func (db *DB) storeFailure(ctx context.Context, res check.Result, now time.Time, failures int) error {
 	var retryAfter *sqltime.UTC
 	if res.RetryAfter > 0 {
@@ -59,8 +52,6 @@ func (db *DB) storeFailure(ctx context.Context, res check.Result, now time.Time,
 		return fmt.Errorf("record attempt for %s: %w", res.Domain, err)
 	}
 
-	// the checker decides what's blockable, data shouldn't know every
-	// protocol's errors
 	if res.Blockable() {
 		if err := db.BlockDomain(ctx, sqlcgen.BlockDomainParams{
 			Domain:    res.Domain,
@@ -71,8 +62,6 @@ func (db *DB) storeFailure(ctx context.Context, res check.Result, now time.Time,
 		}
 	}
 
-	// defer even when blocked, otherwise the row keeps getting re-read until
-	// the block lands
 	if err := db.DeferCheck(ctx, sqlcgen.DeferCheckParams{
 		Domain:     res.Domain,
 		FreshUntil: sqltime.At(check.Backoff(now, failures, res.RetryAfter)),

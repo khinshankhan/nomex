@@ -48,7 +48,6 @@ flags:
 		return err
 	}
 
-	// before anything is queried
 	if err := requireContact(); err != nil {
 		return err
 	}
@@ -89,7 +88,7 @@ flags:
 		Origins:     checker,
 		PreCheck:    preCheck,
 		Progress: func(s sweep.Stat) {
-			// workers report concurrently, and each suffix runs its own pool
+			// workers report concurrently
 			mu.Lock()
 			defer mu.Unlock()
 
@@ -121,7 +120,7 @@ flags:
 		},
 	})
 
-	// Ctrl-C is how this normally ends, not a failure
+	// Ctrl-C is the normal way out
 	if err != nil && !sweep.Cancelled(err) {
 		return fmt.Errorf("after %d checks: %w", done, err)
 	}

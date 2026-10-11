@@ -11,7 +11,7 @@ import (
 	"github.com/khinshankhan/nomex/check"
 )
 
-// fakeChecker returns canned results, counting calls per domain.
+// fakeChecker returns canned results in order and counts calls per domain.
 type fakeChecker struct {
 	mu      sync.Mutex
 	calls   map[string]int
@@ -44,7 +44,7 @@ func fastLimiters() *limiters {
 	return newLimiters(Limits{Every: time.Microsecond, Burst: 100})
 }
 
-// spyBackoff records which attempts asked for a delay, and never waits.
+// spyBackoff records which attempts asked for a delay. It never waits.
 type spyBackoff struct {
 	asked []int
 }
@@ -68,11 +68,9 @@ func TestCheckWithRetry(t *testing.T) {
 		wantErr   bool
 		wantWaits []int // attempts that backed off before the next try
 	}{
-		// a momentary failure shouldn't cost a full backoff cycle
 		{"retries a transient failure", []check.Result{rateLimited, available}, 3, false, 2, false, []int{0}},
-		// it would just fail the same way
 		{"permanent failure isn't retried", []check.Result{malformed}, 5, false, 1, true, nil},
-		// no wait after the last attempt, there's nothing left to wait for
+		// no wait after the last attempt
 		{"gives up after max attempts", []check.Result{rateLimited}, 3, false, 3, true, []int{0, 1}},
 		{"stops on cancellation", []check.Result{rateLimited}, 10, true, 1, true, []int{0}},
 	}
@@ -98,8 +96,7 @@ func TestCheckWithRetry(t *testing.T) {
 			if !slices.Equal(backoff.asked, tt.wantWaits) {
 				t.Errorf("backed off after attempts %v, want %v", backoff.asked, tt.wantWaits)
 			}
-			// the last result comes back as is, so a retryable failure still
-			// gets deferred rather than blocked
+			// the last result comes back as is
 			if want := tt.results[len(tt.results)-1]; res.Status != want.Status || res.Retryable != want.Retryable {
 				t.Errorf("got %s retryable=%v, want %s retryable=%v",
 					res.Status, res.Retryable, want.Status, want.Retryable)

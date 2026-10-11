@@ -26,8 +26,7 @@ func TestThrottlesActive(t *testing.T) {
 	}
 }
 
-// A wait can grow but never shrink, so a short Retry-After can't cancel a long
-// one.
+// a wait can grow but never shrink
 func TestThrottlesExtend(t *testing.T) {
 	now := time.Now()
 	th := newThrottles(nil)

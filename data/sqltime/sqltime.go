@@ -9,12 +9,8 @@ import (
 
 // UTC is a time.Time that always stores as UTC.
 //
-// SQLite has no date type, DATETIME is text and compares as a string. A stored
-// "-04:00" offset isn't interpreted, so an hour from now can sort as hours ago.
-// Normalizing here means passing a local time can't break it.
-//
-// Queries still wrap timestamps in datetime() when comparing, for rows written
-// some other way (CURRENT_TIMESTAMP defaults, a manual UPDATE).
+// NOTE: SQLite compares DATETIME as text and ignores a stored offset, so an
+// hour from now in -04:00 sorts as hours ago.
 type UTC struct {
 	time.Time
 }
@@ -37,8 +33,7 @@ func Ptr(t *time.Time) *UTC {
 	return &UTC{t.UTC()}
 }
 
-// Text formats t the way the driver writes it, for query parameters that are
-// compared as text.
+// Text formats t the way the driver writes it, for text comparisons.
 func Text(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }

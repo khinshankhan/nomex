@@ -9,8 +9,7 @@ import (
 	"github.com/khinshankhan/nomex/check"
 )
 
-// DNS can prove a domain is registered, never that it's available, and a
-// resolver failure must never look like an answer.
+// DNS can prove registered, never available, and a failure is never an answer
 func TestCheck(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -76,7 +75,7 @@ func TestCheck(t *testing.T) {
 			if (got.Err != nil) != tt.wantErr {
 				t.Errorf("Err = %v, want error=%v", got.Err, tt.wantErr)
 			}
-			// every failure is worth retrying, nothing about DNS is permanent
+			// nothing about DNS is permanent
 			if got.Retryable != tt.wantErr {
 				t.Errorf("Retryable = %v, want %v", got.Retryable, tt.wantErr)
 			}
@@ -93,7 +92,7 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-// fakeLookup always returns ns and err, so tests don't need a network.
+// fakeLookup always returns ns and err.
 func fakeLookup(ns []*net.NS, err error) Option {
 	return withLookup(func(context.Context, string) ([]*net.NS, error) {
 		return ns, err

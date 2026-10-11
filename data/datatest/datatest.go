@@ -45,8 +45,7 @@ func Open(t *testing.T) *data.DB {
 	return db
 }
 
-// migrationsDir finds migrations/ from this file, so it works from any test's
-// package directory.
+// migrationsDir finds migrations/ relative to this file, from any package.
 func migrationsDir(t *testing.T) string {
 	t.Helper()
 

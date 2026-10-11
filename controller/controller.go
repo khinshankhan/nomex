@@ -14,11 +14,9 @@ import (
 )
 
 const (
-	// defaultAddr is where serve listens.
 	defaultAddr = 8080
 
-	// shutdownGrace bounds the drain so a hung request can't hold the process
-	// open forever.
+	// so a hung request can't hold shutdown forever
 	shutdownGrace = 10 * time.Second
 )
 
@@ -29,13 +27,12 @@ func RunHTTPServer(ctx context.Context) error {
 	return newHTTPServer(addr).run(ctx)
 }
 
-// httpServer owns the listener's lifecycle.
 type httpServer struct {
 	srv *http.Server
 }
 
 func newHTTPServer(addr string) *httpServer {
-	// first listed runs outermost, so Recover sees panics from BlackHole too
+	// first listed is outermost
 	// TODO: add CORS here
 	handler := middleware.Chain(
 		middleware.Recover,
@@ -58,18 +55,16 @@ func (s *httpServer) run(ctx context.Context) error {
 		listening <- s.srv.ListenAndServe()
 	}()
 
-	// listener errors come back on a channel, cancellation on the context
-	// NOTE: return the listener error instead of logging it, a swallowed
-	// "address already in use" leaves the process up with nothing serving
+	// NOTE: return the listener error, a swallowed "address already in use"
+	// leaves the process up with nothing serving
 	select {
 	case err := <-listening:
-		// only reachable when the server stopped on its own
 		return err
 
 	case <-ctx.Done():
 		logx.Default().Named("http").Info("shutting down")
 
-		// fresh context since ctx is already cancelled
+		// ctx is already cancelled
 		shutCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
 
@@ -77,7 +72,6 @@ func (s *httpServer) run(ctx context.Context) error {
 			return fmt.Errorf("shutting down: %w", err)
 		}
 
-		// ErrServerClosed means Shutdown was called, which is fine
 		if err := <-listening; !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
@@ -88,7 +82,6 @@ func (s *httpServer) run(ctx context.Context) error {
 func routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// Health endpoint
 	mux.HandleFunc("GET /api/healthz", handler.HealthHandler)
 
 	return mux

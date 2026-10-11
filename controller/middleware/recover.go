@@ -9,16 +9,15 @@ import (
 	"github.com/khinshankhan/nomex/platform/logx"
 )
 
-// Recover turns a panic into a 500, unless the response already started. A
-// second WriteHeader is ignored at that point, so the response just gets cut
-// off.
+// Recover turns a panic into a 500, unless the response already started, in
+// which case it's cut off.
 func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rw := &recorder{wrapper: wrapper{ResponseWriter: w}}
 
 		defer func() {
 			if err := recover(); err != nil {
-				// ErrAbortHandler is an intentional abort, pass it along
+				// an intentional abort, pass it on
 				if err == http.ErrAbortHandler {
 					panic(err)
 				}
@@ -55,7 +54,7 @@ func (w *recorder) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// ReadFrom and Flush bypass Write, so both must mark the response as started.
+// ReadFrom and Flush bypass Write, so both mark the response as started.
 func (w *recorder) ReadFrom(r io.Reader) (int64, error) {
 	w.wroteHeader = true
 	return w.wrapper.ReadFrom(r)

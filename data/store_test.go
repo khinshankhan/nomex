@@ -11,7 +11,7 @@ import (
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
-// seed puts a row in checks so foreign keys from attempts/blocked resolve.
+// seed puts a due row in checks.
 func seed(t *testing.T, db *DB, domain string) {
 	t.Helper()
 	if _, err := db.SeedCheck(t.Context(), sqlcgen.SeedCheckParams{
@@ -22,7 +22,7 @@ func seed(t *testing.T, db *DB, domain string) {
 	}
 }
 
-// within reports whether got is d from now, give or take the test's runtime.
+// within reports whether got is d from now, give or take a few seconds.
 func within(got time.Time, d time.Duration) bool {
 	want := time.Now().Add(d)
 	return !got.Before(want.Add(-5*time.Second)) && !got.After(want.Add(5*time.Second))
@@ -71,15 +71,13 @@ func TestStoreAnswer(t *testing.T) {
 	if got.CheckedAt == nil || !within(got.CheckedAt.Time, 0) {
 		t.Errorf("checked_at = %v, want now", got.CheckedAt)
 	}
-	// expiry a year out, so the 90 day cap applies
+	// a year out, so the 90 day cap applies
 	if !within(got.FreshUntil.Time, 90*24*time.Hour) {
 		t.Errorf("fresh_until = %v, want 90 days from now", got.FreshUntil.Time)
 	}
 }
 
-// A failure should never become a status in checks. It's recorded as an
-// attempt and the row is deferred, by the server's Retry-After if it sent one
-// and by the failure streak otherwise.
+// a failure is never stored as a status, it's an attempt and a deferred row
 func TestStoreFailure(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -145,7 +143,6 @@ func TestStoreFailure(t *testing.T) {
 	}
 }
 
-// data blocks exactly when the checker says to (see check/rdapchecker).
 func TestStoreBlocksOnlyWhenTold(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -184,8 +181,6 @@ func TestStoreBlocksOnlyWhenTold(t *testing.T) {
 	}
 }
 
-// Retention has to actually delete old attempts, but leave recent ones since
-// they drive the backoff.
 func TestPruneAttemptsKeepsRecentFailures(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()

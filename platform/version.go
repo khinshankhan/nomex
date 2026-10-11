@@ -4,12 +4,11 @@ import (
 	"runtime/debug"
 )
 
-// VersionInfo is the build identity split into its component parts.
+// VersionInfo is the build identity.
 type VersionInfo struct {
 	// Module is the main module path.
 	Module string
-	// Version is the best available display version: the VCS revision when
-	// present, otherwise the module version, or "unknown".
+	// Version is the VCS revision, else the module version, else "unknown".
 	Version string
 	// Commit is the VCS revision, when available.
 	Commit string
@@ -19,7 +18,7 @@ type VersionInfo struct {
 	Dirty bool
 }
 
-// Version returns the module path and build identity as separate parts.
+// Version returns the build identity for the named module.
 func Version(name string) *VersionInfo {
 	info := VersionInfo{Version: "unknown"}
 
@@ -51,9 +50,7 @@ func Version(name string) *VersionInfo {
 	return &info
 }
 
-// String reports the module path and best available version from embedded
-// build info: VCS revision for source builds, module version for proxy
-// installs, "unknown" when neither exists (eg tarball builds).
+// String reports the module path and version.
 func (info *VersionInfo) String() string {
 	version := info.Version
 	if info.Commit != "" {

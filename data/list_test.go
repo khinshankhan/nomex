@@ -11,7 +11,7 @@ import (
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
 
-// listAll is the "no filters" call the list command makes by default.
+// listAll lists with no limit unless p sets one.
 func listAll(t *testing.T, db *DB, p sqlcgen.ListChecksParams) []sqlcgen.ListChecksRow {
 	t.Helper()
 	if p.Lim == 0 {
@@ -81,7 +81,6 @@ func TestListChecksFilters(t *testing.T) {
 			want:   []string{"a.dev"},
 		},
 		{
-			// an old answer is still an answer, listed unless excluded
 			name:   "fresh only omits lapsed answers",
 			params: sqlcgen.ListChecksParams{Status: "not_found", FreshOnly: 1},
 			want:   []string{"a.dev", "d.net", "bb.dev"},
@@ -112,7 +111,6 @@ func TestListChecksFilters(t *testing.T) {
 	}
 }
 
-// The stale flag tells a caller how much to trust the row.
 func TestListChecksReportsStaleness(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()
@@ -136,15 +134,13 @@ func TestListChecksReportsStaleness(t *testing.T) {
 	}
 }
 
-// SQLite compares DATETIME as text, so a stored "-04:00" offset is ignored and
-// an hour from now reads as hours stale unless wrapped in datetime().
+// a stored "-04:00" offset only works because queries wrap it in datetime()
 func TestTimestampComparisonsHonourOffsets(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()
 
-	// written as text so it skips sqltime's UTC normalising, like a manual
-	// UPDATE would. the wall clock reads 3h behind UTC, so as plain text it
-	// sorts before datetime('now')
+	// raw text, skipping sqltime. 3h behind UTC on the wall clock, so as plain
+	// text it sorts before datetime('now')
 	west := time.FixedZone("UTC-4", -4*3600)
 	future := time.Now().Add(time.Hour).In(west).Format("2006-01-02 15:04:05-07:00")
 	if err := db.Exec(ctx,
@@ -161,7 +157,6 @@ func TestTimestampComparisonsHonourOffsets(t *testing.T) {
 		t.Errorf("%s, an hour from now, was reported stale", future)
 	}
 
-	// and the sweep shouldn't claim it
 	due, err := db.DueSuffixes(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -171,9 +166,6 @@ func TestTimestampComparisonsHonourOffsets(t *testing.T) {
 	}
 }
 
-// The sweep claims work per suffix: due rows only, never blocked ones, and a
-// live request (higher priority) ahead of the background sweep, then oldest
-// first.
 func TestClaimQueries(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()
@@ -241,8 +233,7 @@ func TestClaimQueries(t *testing.T) {
 	})
 }
 
-// namedQuery returns the SQL for one sqlc query, read from queries/ so the test
-// explains what actually ships.
+// namedQuery returns the SQL for one query in queries/checks.sql.
 func namedQuery(t *testing.T, name string) string {
 	t.Helper()
 
@@ -265,9 +256,8 @@ func namedQuery(t *testing.T, name string) string {
 	return sb.String()
 }
 
-// The claim runs once per batch for the life of a sweep. Without an index in
-// the claim's order it sorts every due row of the suffix before LIMIT, which
-// measured 270-350ms per batch at 2M rows instead of 0.5ms.
+// without its index the claim sorts every due row: 270-350ms per batch at 2M
+// rows, against 0.5ms
 func TestClaimUsesItsIndex(t *testing.T) {
 	db := openTest(t)
 

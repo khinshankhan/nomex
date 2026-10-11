@@ -17,13 +17,11 @@ import (
 )
 
 func main() {
-	// one context for everything, cancelled on SIGINT/SIGTERM
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if err := run(ctx, os.Args[1:]); err != nil {
-		// usage errors are for a person and can span lines, which a log field
-		// would escape, so print those plainly
+		// usage errors can span lines, which a log field would escape
 		var ue *usageError
 		if errors.As(err, &ue) {
 			fmt.Fprintln(os.Stderr, ue.Error())
@@ -58,11 +56,9 @@ func run(ctx context.Context, args []string) error {
 	case "status":
 		return runStatus(ctx, args[1:])
 	case "version":
-		// stdout with a newline, this is output not a log
 		fmt.Fprintln(os.Stdout, version.String())
 		return nil
 	case "ua":
-		// the same string the sweep sends
 		fmt.Fprintln(os.Stdout, userAgent(version))
 		return nil
 	case "help", "-h", "--help":
@@ -90,9 +86,8 @@ usage:
 `)
 }
 
-// runServe runs the HTTP server + background tasks.
+// runServe runs the HTTP server.
 func runServe(ctx context.Context) error {
-	// one subsystem failing takes the rest down with it
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
@@ -102,9 +97,7 @@ func runServe(ctx context.Context) error {
 	return g.Wait()
 }
 
-// userAgent is what registries see, shared so `nomex ua` reports the real
-// string. The contact comes from the environment with no default (see
-// config.EnvContact).
+// userAgent is what registries see, shared with `nomex ua`.
 func userAgent(v *platform.VersionInfo) string {
 	return platform.UserAgent(v, platform.UserAgentOptions{
 		Name:  "nomex",

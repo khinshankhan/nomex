@@ -28,7 +28,7 @@ func TestSpecCount(t *testing.T) {
 				t.Errorf("Count() = %d, want %d", got, tt.want)
 			}
 
-			// Count sizes a run up front, so it has to match All
+			// has to match All
 			var n int64
 			for range tt.spec.All() {
 				n++
@@ -51,8 +51,6 @@ func TestSpecAllOrder(t *testing.T) {
 	}
 }
 
-// Count refuses totals past 2^40 rather than overflowing. It used to go
-// negative at 15 characters and the CLI printed it.
 func TestCountLimit(t *testing.T) {
 	const limit = int64(1) << 40
 

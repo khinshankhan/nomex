@@ -12,8 +12,8 @@ import (
 	"github.com/khinshankhan/rdap/bootstrap"
 )
 
-// registry is a fake RDAP server for the "test" suffix. answers maps a domain
-// to the response it gets, and it serves its own bootstrap registry too.
+// registry is a fake RDAP server, and its bootstrap registry, for the "test"
+// suffix. answers maps a domain to its response.
 func registry(t *testing.T, answers map[string]http.HandlerFunc) (*Checker, string) {
 	t.Helper()
 
@@ -72,9 +72,7 @@ func date(s string) *time.Time {
 	return &t
 }
 
-// Check turns every registry answer into a status, and decides which failures
-// are about the domain itself. Only those block it: blocking on a server or
-// config error would write a domain off for good over someone else's problem.
+// only failures about the domain itself block it
 func TestCheck(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -107,7 +105,6 @@ func TestCheck(t *testing.T) {
 			wantExpiration: date("2027-07-02T03:23:42.407Z"),
 		},
 		{
-			// about the answer's freshness, not the domain
 			name:       "database update isn't an expiry",
 			domain:     "fresh.test",
 			answer:     domainObject(`{"eventAction":"last update of RDAP database","eventDate":"2026-08-23T15:05:42Z"}`),
@@ -151,7 +148,7 @@ func TestCheck(t *testing.T) {
 			wantBlock:  true,
 		},
 		{
-			// not retryable, but about the server, not the domain
+			// not retryable, but about the server
 			name:       "unsupported doesn't block",
 			domain:     "todo.test",
 			answer:     status(http.StatusNotImplemented),
@@ -223,8 +220,7 @@ func TestCheck(t *testing.T) {
 				t.Error("a failure has no error kind to record")
 			}
 
-			// anything that reached the server is attributed to it, by origin
-			// rather than the full URL so state is per server
+			// anything that reached the server is attributed to its origin
 			if tt.answer != nil {
 				if got.Origin != origin {
 					t.Errorf("origin = %q, want %q", got.Origin, origin)
@@ -237,8 +233,6 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-// Origin names the server for a domain without querying it, so the sweep can
-// skip throttled servers for free.
 func TestOrigin(t *testing.T) {
 	c, origin := registry(t, nil)
 
@@ -247,7 +241,7 @@ func TestOrigin(t *testing.T) {
 		t.Errorf("Origin(.test) = %q, %v, want %q", got, err, origin)
 	}
 
-	// no server isn't an error here, the query itself fails and blocks
+	// no server isn't an error, the query itself fails
 	got, err = c.Origin(t.Context(), "anything.zz")
 	if err != nil || got != "" {
 		t.Errorf("Origin(.zz) = %q, %v, want no origin", got, err)

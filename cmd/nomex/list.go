@@ -99,7 +99,7 @@ flags:
 	}
 	buf.Flush()
 
-	// stderr so it doesn't end up in a redirected list
+	// stderr, so it stays out of a redirected list
 	fmt.Fprintf(os.Stderr, "%d rows", len(rows))
 	if stale > 0 {
 		fmt.Fprintf(os.Stderr, ", %d past their TTL", stale)

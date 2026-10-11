@@ -7,23 +7,19 @@ import (
 	"strings"
 )
 
-// UserAgentOptions carries what the build identity cannot supply on its own.
+// UserAgentOptions is what the build info can't supply.
 type UserAgentOptions struct {
 	// Name is the product token, eg "nomex". Defaults to info.Name.
 	Name string
 
-	// URL is a contact address. It's the one field a registry operator can
-	// act on.
+	// URL is a contact address for registry operators.
 	URL string
 
-	// Extra carries key=value pairs, eg service="rdap". Sorted so the header
-	// is stable across runs.
+	// Extra adds key=value pairs, eg service="rdap", sorted.
 	Extra map[string]string
 }
 
-// UserAgent renders info and opts as an RFC 9110 User-Agent value.
-//
-// The result is one product token followed by a parenthesized comment:
+// UserAgent renders info and opts as an RFC 9110 User-Agent value:
 //
 //	name/a1b2c3d (+https://github.com/khinshankhan/name; go=go1.26.4; os=linux; arch=amd64)
 func UserAgent(info *VersionInfo, opts UserAgentOptions) string {
@@ -61,9 +57,8 @@ func UserAgent(info *VersionInfo, opts UserAgentOptions) string {
 	return sb.String()
 }
 
-// token scrubs s to RFC 9110 token characters, def when empty. Only for
-// product and version, it's too strict for the comment where "/" and ":" are
-// fine.
+// token scrubs s to RFC 9110 token characters, def when empty. Too strict for
+// the comment, which needs "/" and ":".
 func token(s, def string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -82,8 +77,8 @@ func token(s, def string) string {
 	}, s)
 }
 
-// comment scrubs s for the parenthesized comment. RFC 9110 allows anything
-// there but parens and backslashes, so a URL survives.
+// comment scrubs s for the parenthesized comment, dropping parens and
+// backslashes.
 func comment(s string) string {
 	s = strings.TrimSpace(s)
 
@@ -92,7 +87,7 @@ func comment(s string) string {
 		case r == '(', r == ')', r == '\\':
 			return '-'
 		case r < 0x20 || r == 0x7f:
-			// control chars, including CR/LF which would split the header
+			// control chars, CR/LF would split the header
 			return -1
 		default:
 			return r

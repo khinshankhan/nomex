@@ -18,7 +18,7 @@ func newThrottles(until map[string]time.Time) *throttles {
 	return &throttles{until: until}
 }
 
-// active returns when origin reopens, if it's still throttled at now.
+// active returns when origin reopens, if it's throttled at now.
 func (t *throttles) active(origin string, now time.Time) (time.Time, bool) {
 	if origin == "" {
 		return time.Time{}, false
@@ -34,7 +34,7 @@ func (t *throttles) active(origin string, now time.Time) (time.Time, bool) {
 	return until, true
 }
 
-// extend throttles origin until the given time, never shortening a longer wait.
+// extend throttles origin until the given time. A wait never gets shorter.
 func (t *throttles) extend(origin string, until time.Time) {
 	if origin == "" || until.IsZero() {
 		return
