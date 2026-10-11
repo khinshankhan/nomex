@@ -60,20 +60,22 @@ func TestSeedIsIncremental(t *testing.T) {
 	two := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 2, Alphabet: "abcdefgh"}
 	three := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 3, Alphabet: "abcdefgh"}
 
+	// 8 + 8^2
 	n, err := Seed(ctx, db, two, SeedOptions{Batch: 100})
 	if err != nil {
 		t.Fatalf("first seed: %v", err)
 	}
-	if n != mustCount(t, two) {
-		t.Errorf("first seed inserted %d, want %d", n, mustCount(t, two))
+	if n != 72 {
+		t.Errorf("first seed inserted %d, want 72", n)
 	}
 
 	n, err = Seed(ctx, db, three, SeedOptions{Batch: 100})
 	if err != nil {
 		t.Fatalf("widened seed: %v", err)
 	}
-	if want := mustCount(t, three) - mustCount(t, two); n != want {
-		t.Errorf("widened seed inserted %d, want %d (only the new labels)", n, want)
+	// 8^3, only the new labels
+	if n != 512 {
+		t.Errorf("widened seed inserted %d, want 512", n)
 	}
 
 	n, err = Seed(ctx, db, three, SeedOptions{Batch: 100})
@@ -84,8 +86,8 @@ func TestSeedIsIncremental(t *testing.T) {
 		t.Errorf("repeat seed inserted %d, want 0", n)
 	}
 
-	if got := count(t, db); got != mustCount(t, three) {
-		t.Errorf("total rows = %d, want %d", got, mustCount(t, three))
+	if got := count(t, db); got != 584 {
+		t.Errorf("total rows = %d, want 584", got)
 	}
 }
 
@@ -142,8 +144,8 @@ func TestSeedRowsAreDue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DueChecks: %v", err)
 	}
-	if int64(len(due)) != mustCount(t, spec) {
-		t.Errorf("%d rows due, want all %d", len(due), mustCount(t, spec))
+	if len(due) != 26 {
+		t.Errorf("%d rows due, want all 26", len(due))
 	}
 }
 
@@ -180,8 +182,8 @@ func TestSeedCancellationKeepsProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resumed seed: %v", err)
 	}
-	if got := count(t, db); got != mustCount(t, spec) {
-		t.Errorf("after resume: %d rows, want %d (added %d)", got, mustCount(t, spec), n)
+	if got := count(t, db); got != 584 {
+		t.Errorf("after resume: %d rows, want 584 (added %d)", got, n)
 	}
 }
 

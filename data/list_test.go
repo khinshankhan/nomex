@@ -139,15 +139,14 @@ func TestTimestampComparisonsHonourOffsets(t *testing.T) {
 	db := openTest(t)
 	ctx := t.Context()
 
-	// not UTC on purpose, a local time shouldn't break due detection
-	local := time.Now().Add(time.Hour)
-	if local.Location() == time.UTC {
-		t.Skip("machine is on UTC; this bug is invisible here")
-	}
-
-	if err := db.UpsertCheck(ctx, sqlcgen.UpsertCheckParams{
-		Domain: "future.dev", Status: "not_found", FreshUntil: sqltime.At(local),
-	}); err != nil {
+	// written as text so it skips sqltime's UTC normalising, like a manual
+	// UPDATE would. the wall clock reads 3h behind UTC, so as plain text it
+	// sorts before datetime('now')
+	west := time.FixedZone("UTC-4", -4*3600)
+	future := time.Now().Add(time.Hour).In(west).Format("2006-01-02 15:04:05-07:00")
+	if err := db.Exec(ctx,
+		`INSERT INTO checks (domain, status, fresh_until) VALUES ('future.dev', 'not_found', ?)`,
+		future); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +155,7 @@ func TestTimestampComparisonsHonourOffsets(t *testing.T) {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
 	if rows[0].Stale {
-		t.Error("a timestamp an hour in the future was reported stale")
+		t.Errorf("%s, an hour from now, was reported stale", future)
 	}
 
 	// and the sweep shouldn't claim it

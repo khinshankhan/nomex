@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-// mustCount fails the test instead of returning an error.
-func mustCount(t *testing.T, s Spec) int64 {
-	t.Helper()
-	n, err := s.Count()
-	if err != nil {
-		t.Fatalf("Count: %v", err)
-	}
-	return n
-}
-
 func TestSpecCount(t *testing.T) {
 	tests := []struct {
 		name string
@@ -31,7 +21,11 @@ func TestSpecCount(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := mustCount(t, tt.spec); got != tt.want {
+			got, err := tt.spec.Count()
+			if err != nil {
+				t.Fatalf("Count: %v", err)
+			}
+			if got != tt.want {
 				t.Errorf("Count() = %d, want %d", got, tt.want)
 			}
 

@@ -12,6 +12,8 @@ func at(d time.Duration) *time.Time {
 	return &t
 }
 
+const day = 24 * time.Hour
+
 func TestFreshUntil(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -19,16 +21,16 @@ func TestFreshUntil(t *testing.T) {
 		expiration *time.Time
 		want       time.Duration // from now
 	}{
-		{"available is short-lived", StatusNotFound, nil, NotFoundTTL},
-		{"available ignores any expiry", StatusNotFound, at(365 * 24 * time.Hour), NotFoundTTL},
-		{"unknown is not cached", StatusUnknown, nil, UnknownTTL},
-		{"registered without expiry", StatusRegistered, nil, NoExpiryTTL},
-		{"expiry soon: look just after", StatusRegistered, at(4 * 24 * time.Hour), 5 * 24 * time.Hour},
-		{"expiry far: capped", StatusRegistered, at(365 * 24 * time.Hour), MaxTTL},
-		{"just expired: weekly", StatusRegistered, at(-24 * time.Hour), ExpiredRecheck},
-		{"inside drop window", StatusRegistered, at(-74 * 24 * time.Hour), ExpiredRecheck},
-		{"past drop window: renewed", StatusRegistered, at(-76 * 24 * time.Hour), NoExpiryTTL},
-		{"expired years ago", StatusRegistered, at(-10 * 365 * 24 * time.Hour), NoExpiryTTL},
+		{"available is short-lived", StatusNotFound, nil, 6 * time.Hour},
+		{"available ignores any expiry", StatusNotFound, at(365 * day), 6 * time.Hour},
+		{"unknown is not cached", StatusUnknown, nil, time.Hour},
+		{"registered without expiry", StatusRegistered, nil, 30 * day},
+		{"expiry soon: look just after", StatusRegistered, at(4 * day), 5 * day},
+		{"expiry far: capped", StatusRegistered, at(365 * day), 90 * day},
+		{"just expired: weekly", StatusRegistered, at(-day), 7 * day},
+		{"inside drop window", StatusRegistered, at(-74 * day), 7 * day},
+		{"past drop window: renewed", StatusRegistered, at(-76 * day), 30 * day},
+		{"expired years ago", StatusRegistered, at(-10 * 365 * day), 30 * day},
 	}
 
 	for _, tt := range tests {
@@ -41,25 +43,11 @@ func TestFreshUntil(t *testing.T) {
 	}
 }
 
-// Without the cap a far off expiry would never get rechecked.
-func TestFreshUntilAlwaysCapped(t *testing.T) {
-	for _, d := range []time.Duration{
-		91 * 24 * time.Hour,
-		365 * 24 * time.Hour,
-		10 * 365 * 24 * time.Hour,
-	} {
-		got := FreshUntil(now, StatusRegistered, at(d))
-		if max := now.Add(MaxTTL); got.After(max) {
-			t.Errorf("expiry %v out: FreshUntil = %v, past the %v cap", d, got, MaxTTL)
-		}
-	}
-}
-
 // Nothing should return a time in the past, or the row stays due forever.
 func TestFreshUntilIsAlwaysFuture(t *testing.T) {
 	offsets := []time.Duration{
-		-10 * 365 * 24 * time.Hour, -76 * 24 * time.Hour, -time.Second,
-		0, time.Second, 365 * 24 * time.Hour,
+		-10 * 365 * day, -76 * day, -time.Second,
+		0, time.Second, 365 * day,
 	}
 	statuses := []Status{StatusNotFound, StatusRegistered, StatusUnknown, StatusUnchecked}
 
@@ -76,27 +64,27 @@ func TestFreshUntilIsAlwaysFuture(t *testing.T) {
 }
 
 func TestBackoff(t *testing.T) {
-	// a server's Retry-After wins
-	if got, want := Backoff(now, 0, 5*time.Minute), now.Add(5*time.Minute); !got.Equal(want) {
-		t.Errorf("with Retry-After: %v, want %v", got, want)
-	}
-	if got, want := Backoff(now, 99, 30*time.Second), now.Add(30*time.Second); !got.Equal(want) {
-		t.Errorf("Retry-After must win over failure count: %v, want %v", got, want)
+	tests := []struct {
+		name       string
+		failures   int
+		retryAfter time.Duration
+		want       time.Duration
+	}{
+		{"first failure", 0, 0, 5 * time.Minute},
+		{"doubles", 1, 0, 10 * time.Minute},
+		{"doubles again", 3, 0, 40 * time.Minute},
+		{"last step under the cap", 8, 0, 21*time.Hour + 20*time.Minute},
+		{"capped at a day", 9, 0, day},
+		{"stays capped", 50, 0, day},
+		{"retry-after wins", 0, 30 * time.Second, 30 * time.Second},
+		{"retry-after wins over a long streak", 50, 30 * time.Second, 30 * time.Second},
 	}
 
-	// otherwise it doubles, up to the cap
-	var last time.Time
-	for i := range 20 {
-		got := Backoff(now, i, 0)
-		if !got.After(now) {
-			t.Fatalf("failures=%d: %v is not in the future", i, got)
-		}
-		if i > 0 && got.Before(last) {
-			t.Errorf("failures=%d: backoff went backwards (%v < %v)", i, got, last)
-		}
-		if max := now.Add(24 * time.Hour); got.After(max) {
-			t.Errorf("failures=%d: %v exceeds the 24h cap", i, got)
-		}
-		last = got
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, want := Backoff(now, tt.failures, tt.retryAfter), now.Add(tt.want); !got.Equal(want) {
+				t.Errorf("Backoff = %v, want %v", got.Sub(now), tt.want)
+			}
+		})
 	}
 }
