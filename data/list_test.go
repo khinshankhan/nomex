@@ -160,12 +160,12 @@ func TestTimestampComparisonsHonourOffsets(t *testing.T) {
 	}
 
 	// and the sweep shouldn't claim it
-	due, err := db.DueChecks(ctx, 10)
+	due, err := db.DueSuffixes(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(due) != 0 {
-		t.Errorf("DueChecks returned %v, want nothing due", due)
+		t.Errorf("DueSuffixes returned %v, want nothing due", due)
 	}
 }
 

@@ -140,9 +140,9 @@ func TestSeedRowsAreDue(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	due, err := db.DueChecks(ctx, 100)
+	due, err := db.DueChecksForSuffix(ctx, sqlcgen.DueChecksForSuffixParams{Suffix: "dev", Limit: 100})
 	if err != nil {
-		t.Fatalf("DueChecks: %v", err)
+		t.Fatalf("DueChecksForSuffix: %v", err)
 	}
 	if len(due) != 26 {
 		t.Errorf("%d rows due, want all 26", len(due))

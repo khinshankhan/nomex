@@ -96,9 +96,9 @@ func TestThrottledDomainsAreDeferred(t *testing.T) {
 	if !row.FreshUntil.Equal(reopens) {
 		t.Errorf("fresh_until = %v, want %v when the registry reopens", row.FreshUntil.Time, reopens)
 	}
-	due, err := db.DueChecks(ctx, 10)
+	due, err := db.DueSuffixes(ctx)
 	if err != nil {
-		t.Fatalf("DueChecks: %v", err)
+		t.Fatalf("DueSuffixes: %v", err)
 	}
 	if len(due) != 0 {
 		t.Errorf("still due: %v", due)

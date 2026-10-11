@@ -87,53 +87,6 @@ func (q *Queries) DeferCheck(ctx context.Context, arg DeferCheckParams) error {
 	return err
 }
 
-const dueChecks = `-- name: DueChecks :many
-
-SELECT domain FROM checks c
-WHERE datetime(c.fresh_until) < datetime('now')
-  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
-ORDER BY c.priority DESC, c.queued_at ASC
-LIMIT ?
-`
-
-// Every comparison of a stored timestamp wraps the column in datetime().
-// SQLite compares DATETIME text lexicographically and does not interpret the
-// "-04:00" a non-UTC time carries, so a raw comparison reads a timestamp an
-// hour in the future as hours stale. datetime() parses the offset.
-// Work is a staleness query: fresh_until in the past means "check this".
-//
-// blocked is excluded here rather than by deleting the row, so a domain that
-// becomes servable again (a new RDAP endpoint published for its suffix) needs
-// one DELETE rather than a re-seed. Measured at 1M rows: 65us without the
-// exclusion, 8.65ms with it -- irrelevant against a rate limit measured in
-// queries per second.
-//
-// retry_after is deliberately NOT consulted. Doing so measured 95ms, 1460x the
-// unfiltered query, because it cannot use the ordering index. The writer pushes
-// fresh_until past the retry instant instead, which costs nothing extra.
-func (q *Queries) DueChecks(ctx context.Context, limit int64) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, dueChecks, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var domain string
-		if err := rows.Scan(&domain); err != nil {
-			return nil, err
-		}
-		items = append(items, domain)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const dueChecksForSuffix = `-- name: DueChecksForSuffix :many
 SELECT domain FROM checks c
 WHERE c.suffix = ?
@@ -148,6 +101,14 @@ type DueChecksForSuffixParams struct {
 	Limit  int64
 }
 
+// Work is a staleness query: fresh_until in the past means "check this".
+//
+// blocked is excluded here rather than by deleting the row, so a domain that
+// becomes servable again (a new RDAP endpoint published for its suffix) needs
+// one DELETE rather than a re-seed.
+//
+// retry_after is deliberately NOT consulted, since it can't use the ordering
+// index. The writer pushes fresh_until past the retry instant instead.
 func (q *Queries) DueChecksForSuffix(ctx context.Context, arg DueChecksForSuffixParams) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, dueChecksForSuffix, arg.Suffix, arg.Limit)
 	if err != nil {
@@ -216,9 +177,14 @@ func (q *Queries) DueSuffixes(ctx context.Context) ([]DueSuffixesRow, error) {
 }
 
 const getCheck = `-- name: GetCheck :one
+
 SELECT domain, status, source, checked_at, fresh_until, expiration, registered_at, server, stale, priority, queued_at, suffix, label_len FROM checks WHERE domain = ?
 `
 
+// Every comparison of a stored timestamp wraps the column in datetime().
+// SQLite compares DATETIME text lexicographically and does not interpret the
+// "-04:00" a non-UTC time carries, so a raw comparison reads a timestamp an
+// hour in the future as hours stale. datetime() parses the offset.
 func (q *Queries) GetCheck(ctx context.Context, domain string) (Check, error) {
 	row := q.db.QueryRowContext(ctx, getCheck, domain)
 	var i Check

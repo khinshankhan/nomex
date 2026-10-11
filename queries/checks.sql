@@ -3,24 +3,6 @@
 -- "-04:00" a non-UTC time carries, so a raw comparison reads a timestamp an
 -- hour in the future as hours stale. datetime() parses the offset.
 
--- name: DueChecks :many
--- Work is a staleness query: fresh_until in the past means "check this".
---
--- blocked is excluded here rather than by deleting the row, so a domain that
--- becomes servable again (a new RDAP endpoint published for its suffix) needs
--- one DELETE rather than a re-seed. Measured at 1M rows: 65us without the
--- exclusion, 8.65ms with it -- irrelevant against a rate limit measured in
--- queries per second.
---
--- retry_after is deliberately NOT consulted. Doing so measured 95ms, 1460x the
--- unfiltered query, because it cannot use the ordering index. The writer pushes
--- fresh_until past the retry instant instead, which costs nothing extra.
-SELECT domain FROM checks c
-WHERE datetime(c.fresh_until) < datetime('now')
-  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.domain = c.domain)
-ORDER BY c.priority DESC, c.queued_at ASC
-LIMIT ?;
-
 -- name: GetCheck :one
 SELECT * FROM checks WHERE domain = ?;
 
@@ -181,6 +163,14 @@ GROUP BY suffix
 ORDER BY due DESC;
 
 -- name: DueChecksForSuffix :many
+-- Work is a staleness query: fresh_until in the past means "check this".
+--
+-- blocked is excluded here rather than by deleting the row, so a domain that
+-- becomes servable again (a new RDAP endpoint published for its suffix) needs
+-- one DELETE rather than a re-seed.
+--
+-- retry_after is deliberately NOT consulted, since it can't use the ordering
+-- index. The writer pushes fresh_until past the retry instant instead.
 SELECT domain FROM checks c
 WHERE c.suffix = ?
   AND datetime(c.fresh_until) < datetime('now')

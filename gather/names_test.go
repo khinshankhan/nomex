@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/khinshankhan/nomex/data/sqlcgen"
 )
 
 func TestNames(t *testing.T) {
@@ -79,9 +81,9 @@ func TestSeedDomainsIsIncremental(t *testing.T) {
 	}
 
 	// `nomex check` seeds then checks straight away, so they must be due
-	due, err := db.DueChecks(ctx, 10)
+	due, err := db.DueChecksForSuffix(ctx, sqlcgen.DueChecksForSuffixParams{Suffix: "com", Limit: 10})
 	if err != nil {
-		t.Fatalf("DueChecks: %v", err)
+		t.Fatalf("DueChecksForSuffix: %v", err)
 	}
 	if len(due) != 3 {
 		t.Errorf("%d rows due, want all 3", len(due))
