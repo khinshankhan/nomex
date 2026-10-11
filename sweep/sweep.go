@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/khinshankhan/nomex/data/sqlcgen"
 	"github.com/khinshankhan/nomex/data/sqltime"
 	"github.com/khinshankhan/nomex/platform/logx"
+	"golang.org/x/sync/errgroup"
 )
 
 // Defaults lean polite over fast. Google's .dev registry returned 429 after 10
@@ -127,9 +127,6 @@ type sweeper struct {
 
 	// done is shared by every pipeline's workers
 	done atomic.Int64
-
-	errMu    sync.Mutex
-	firstErr error
 }
 
 func newSweeper(db *data.DB, checker check.Checker, opts Options) *sweeper {
@@ -141,23 +138,6 @@ func newSweeper(db *data.DB, checker check.Checker, opts Options) *sweeper {
 		lims:    newLimiters(opts.Limits),
 		start:   time.Now(),
 	}
-}
-
-// fail records err if it's the first.
-func (s *sweeper) fail(err error) {
-	s.errMu.Lock()
-	defer s.errMu.Unlock()
-
-	if s.firstErr == nil {
-		s.firstErr = err
-	}
-}
-
-func (s *sweeper) err() error {
-	s.errMu.Lock()
-	defer s.errMu.Unlock()
-
-	return s.firstErr
 }
 
 // limitReached reports whether Limit checks have been done.
@@ -229,21 +209,16 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 
 // sweepRound runs one pipeline per suffix, concurrently, so each drains at its
 // own registry's pace instead of sharing a batch with a slow one.
+//
+// One pipeline failing stops the rest, since a failed claim or write is on us.
 func (s *sweeper) sweepRound(ctx context.Context, suffixes []sqlcgen.DueSuffixesRow) error {
-	var wg sync.WaitGroup
+	g, gctx := errgroup.WithContext(ctx)
 	for _, suf := range suffixes {
-		wg.Add(1)
-		go func(suffix string) {
-			defer wg.Done()
-
-			if err := s.drain(ctx, suffix); err != nil {
-				s.fail(err)
-			}
-		}(suf.Suffix)
+		g.Go(func() error {
+			return s.drain(gctx, suf.Suffix)
+		})
 	}
-	wg.Wait()
-
-	if err := s.err(); err != nil {
+	if err := g.Wait(); err != nil {
 		return err
 	}
 	return ctx.Err()
@@ -279,60 +254,45 @@ func (s *sweeper) drain(ctx context.Context, suffix string) error {
 	}
 }
 
-// round checks one batch of domains across a worker pool.
+// round checks one batch of domains across a worker pool. A failed write
+// stops the batch, so the rest isn't checked only for its results to be thrown
+// away.
 func (s *sweeper) round(ctx context.Context, domains []string) error {
 	work := make(chan string)
 
-	var (
-		mu       sync.Mutex
-		firstErr error
-		// set on a store failure so the rest of the batch isn't checked only
-		// for its results to be thrown away
-		failed atomic.Bool
-	)
-
-	var wg sync.WaitGroup
+	g, gctx := errgroup.WithContext(ctx)
 	for w := range s.opts.Workers {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
+		// separate RNG per worker so they don't all retry at the same instant
+		backoff := newBackoff(int64(w) * 10_000)
 
-			// separate RNG per worker so they don't all retry at the same
-			// instant
-			backoff := newBackoff(int64(workerID) * 10_000)
-
+		g.Go(func() error {
 			for domain := range work {
-				if failed.Load() {
-					continue
+				if gctx.Err() != nil {
+					return nil
 				}
-				if err := s.checkOne(ctx, backoff, domain); err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-					}
-					mu.Unlock()
-					failed.Store(true)
+				if err := s.checkOne(gctx, backoff, domain); err != nil {
+					return err
 				}
 			}
-		}(w)
+			return nil
+		})
 	}
 
 feed:
 	for _, d := range domains {
-		if s.limitReached() || failed.Load() {
+		if s.limitReached() {
 			break
 		}
 		select {
 		case work <- d:
-		case <-ctx.Done():
+		case <-gctx.Done():
 			break feed
 		}
 	}
 	close(work)
-	wg.Wait()
 
-	if firstErr != nil {
-		return firstErr
+	if err := g.Wait(); err != nil {
+		return err
 	}
 	return ctx.Err()
 }
