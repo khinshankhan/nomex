@@ -9,9 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/khinshankhan/nomex/check/rdapchecker"
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/gather"
+	"github.com/khinshankhan/nomex/platform"
 	"github.com/khinshankhan/nomex/platform/config"
+	"github.com/khinshankhan/nomex/sweep"
 )
 
 // runGather seeds candidate domains. Existing rows are left alone, so a space
@@ -73,7 +76,7 @@ flags:
 	if *dryRun {
 		// seeding measured about 57k rows/sec
 		fmt.Fprintf(os.Stderr, "  seeding:  about %v\n", estimate(total, 57_000))
-		fmt.Fprintf(os.Stderr, "  checking: about %v at 3 queries/sec\n", estimate(total, 3))
+		printCheckEstimates(ctx, total/int64(len(spec.TLDs)), spec.TLDs)
 		return nil
 	}
 
@@ -199,6 +202,81 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// registryEstimate is how long one registry takes to check its TLDs.
+type registryEstimate struct {
+	origin string
+	tlds   []string
+	rate   float64
+	took   time.Duration
+}
+
+// checkEstimates groups tlds by registry, in first-seen order, and times each
+// at its measured rate, since .com and .net share Verisign's budget.
+func checkEstimates(perTLD int64, tlds []string, originOf func(tld string) string) []registryEstimate {
+	var out []registryEstimate
+	index := make(map[string]int)
+	for _, tld := range tlds {
+		origin := originOf(tld)
+		i, ok := index[origin]
+		if !ok {
+			i = len(out)
+			index[origin] = i
+			out = append(out, registryEstimate{
+				origin: origin,
+				rate:   float64(time.Second) / float64(sweep.Budget(origin).Every),
+			})
+		}
+		out[i].tlds = append(out[i].tlds, tld)
+	}
+
+	for i := range out {
+		rows := float64(perTLD * int64(len(out[i].tlds)))
+		out[i].took = time.Duration(rows / out[i].rate * float64(time.Second)).Round(time.Second)
+	}
+	return out
+}
+
+// printCheckEstimates reports how long checking takes per registry. Registries
+// run in parallel, so the slowest sets the total.
+func printCheckEstimates(ctx context.Context, perTLD int64, tlds []string) {
+	ests := checkEstimates(perTLD, tlds, bootstrapOrigins(ctx))
+
+	var longest time.Duration
+	for _, e := range ests {
+		longest = max(longest, e.took)
+	}
+	fmt.Fprintf(os.Stderr, "  checking: about %v, registries in parallel\n", longest)
+
+	for _, e := range ests {
+		origin := e.origin
+		if origin == "" {
+			origin = "unknown registry"
+		}
+		rate := fmt.Sprintf("%g/s", e.rate)
+		fmt.Fprintf(os.Stderr, "    %-32s %-12s %-6s about %v\n", origin, strings.Join(e.tlds, ","), rate, e.took)
+	}
+}
+
+// bootstrapOrigins maps a TLD to its registry from the cached IANA bootstrap,
+// without querying the registry. Empty when it can't tell.
+func bootstrapOrigins(ctx context.Context) func(tld string) string {
+	checker, err := rdapchecker.New(userAgent(platform.Version("nomex")))
+	if err != nil {
+		return func(string) string {
+			return ""
+		}
+	}
+
+	return func(tld string) string {
+		// any label will do, only the suffix decides
+		origin, err := checker.Origin(ctx, "nomex."+tld)
+		if err != nil {
+			return ""
+		}
+		return origin
+	}
 }
 
 func estimate(rows, perSecond int64) time.Duration {

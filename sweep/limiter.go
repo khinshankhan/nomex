@@ -29,20 +29,26 @@ var MeasuredLimits = map[string]Limits{
 	"https://rdap.verisign.com":      {Every: 100 * time.Millisecond, Burst: 10},
 }
 
+// Budget returns origin's measured budget, else DefaultLimits.
+func Budget(origin string) Limits {
+	if m, ok := MeasuredLimits[origin]; ok {
+		return m
+	}
+	return DefaultLimits
+}
+
 // limiters holds one rate limiter per origin. Not per suffix, since .com and
 // .net are both Verisign.
 type limiters struct {
 	mu       sync.Mutex
 	byOrigin map[string]*rate.Limiter
 	limits   Limits
-	measured map[string]Limits
 }
 
 func newLimiters(l Limits) *limiters {
 	return &limiters{
 		byOrigin: make(map[string]*rate.Limiter),
 		limits:   l,
-		measured: MeasuredLimits,
 	}
 }
 
@@ -64,10 +70,7 @@ func (l *limiters) limiter(origin string) *rate.Limiter {
 // budget fills each unset field from origin's measured budget, else the
 // default. An explicit field always wins.
 func (l *limiters) budget(origin string) Limits {
-	fallback, known := l.measured[origin]
-	if !known {
-		fallback = DefaultLimits
-	}
+	fallback := Budget(origin)
 
 	b := l.limits
 	if b.Every <= 0 {
