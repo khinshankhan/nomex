@@ -4,15 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/khinshankhan/logstox/fields"
 	"github.com/khinshankhan/nomex/controller"
 	"github.com/khinshankhan/nomex/platform"
 	"github.com/khinshankhan/nomex/platform/config"
 	"github.com/khinshankhan/nomex/platform/logx"
 	"golang.org/x/sync/errgroup"
-	"os"
-	"os/signal"
-	"syscall"
 )
 
 func main() {
