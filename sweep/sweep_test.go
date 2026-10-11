@@ -35,9 +35,7 @@ func TestThrottledDomainsAreDeferred(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	reopens := time.Now().Add(time.Hour).Truncate(time.Second)
-	if err := db.ThrottleUntil(ctx, origin, reopens); err != nil {
-		t.Fatalf("throttle: %v", err)
-	}
+	throttle(t, db, origin, reopens)
 
 	var skips int
 	checker := newFake(check.Result{Status: check.StatusNotFound})
@@ -102,6 +100,21 @@ func TestStoreFailureStopsTheBatch(t *testing.T) {
 }
 
 // seedDue seeds domains that are due now.
+// throttle records a failure for origin that throttles it until the given time.
+func throttle(t *testing.T, db *data.DB, origin string, until time.Time) {
+	t.Helper()
+
+	now := sqltime.Now()
+	u := sqltime.At(until)
+	if err := db.RecordServerFailure(t.Context(), sqlcgen.RecordServerFailureParams{
+		Origin:           origin,
+		LastFailure:      &now,
+		RateLimitedUntil: &u,
+	}); err != nil {
+		t.Fatalf("throttle: %v", err)
+	}
+}
+
 func seedDue(t *testing.T, db *data.DB, domains ...string) {
 	t.Helper()
 	for _, d := range domains {
@@ -140,9 +153,7 @@ func TestPreCheck(t *testing.T) {
 			ctx := t.Context()
 			seedDue(t, db, "a.dev")
 			// a failure streak whose throttle has lapsed
-			if err := db.ThrottleUntil(ctx, origin, time.Now().Add(-time.Minute)); err != nil {
-				t.Fatalf("throttle: %v", err)
-			}
+			throttle(t, db, origin, time.Now().Add(-time.Minute))
 
 			rdap := newFake(check.Result{Status: check.StatusNotFound, Source: "rdap", Origin: origin})
 			_, err := CheckDomains(ctx, db, rdap, []string{"a.dev"}, Options{

@@ -2,8 +2,6 @@ package data
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
@@ -74,27 +72,11 @@ func throttling(res check.Result) bool {
 	return res.Retryable
 }
 
-// ThrottleUntil marks an origin as unavailable until t.
-func (db *DB) ThrottleUntil(ctx context.Context, origin string, t time.Time) error {
-	if origin == "" {
-		return nil
-	}
-	now := sqltime.Now()
-	until := sqltime.At(t)
-	return db.RecordServerFailure(ctx, sqlcgen.RecordServerFailureParams{
-		Origin:           origin,
-		LastFailure:      &now,
-		RateLimitedUntil: &until,
-	})
-}
-
-// ServerFailures returns the consecutive failure count for an origin.
+// ServerFailures returns the consecutive failure count for an origin, zero if
+// it has none or it can't be read.
 func (db *DB) ServerFailures(ctx context.Context, origin string) int {
 	s, err := db.ServerState(ctx, origin)
 	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return 0
-		}
 		return 0
 	}
 	return int(s.ConsecutiveFailures)

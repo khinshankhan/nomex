@@ -35,20 +35,12 @@ type Option func(*options)
 
 type options struct {
 	bootstrap []bootstrap.Option
-	client    []rdap.ClientOption
 }
 
 // WithBootstrap configures the bootstrap resolver, applied after the defaults.
 func WithBootstrap(opts ...bootstrap.Option) Option {
 	return func(o *options) {
 		o.bootstrap = append(o.bootstrap, opts...)
-	}
-}
-
-// WithClient configures the RDAP client, applied after the defaults.
-func WithClient(opts ...rdap.ClientOption) Option {
-	return func(o *options) {
-		o.client = append(o.client, opts...)
 	}
 }
 
@@ -69,11 +61,10 @@ func New(userAgent string, opts ...Option) (*Checker, error) {
 		return nil, fmt.Errorf("bootstrap resolver: %w", err)
 	}
 
-	defaults := []rdap.ClientOption{
+	client, err := rdap.New(
 		rdap.WithUserAgent(userAgent),
 		rdap.WithResolver(resolver),
-	}
-	client, err := rdap.New(append(defaults, o.client...)...)
+	)
 	if err != nil {
 		return nil, fmt.Errorf("rdap client: %w", err)
 	}

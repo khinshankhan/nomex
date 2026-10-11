@@ -38,15 +38,6 @@ func Text(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
-// Time unwraps u, or returns nil.
-func Time(u *UTC) *time.Time {
-	if u == nil {
-		return nil
-	}
-	t := u.Time
-	return &t
-}
-
 // Value implements driver.Valuer.
 func (u UTC) Value() (driver.Value, error) {
 	return u.Time.UTC(), nil
