@@ -52,6 +52,11 @@ flags:
 		return err
 	}
 
+	lims, err := limits(*rate, *burst)
+	if err != nil {
+		return err
+	}
+
 	names := flags.Args()
 	if len(names) == 0 || (len(names) == 1 && names[0] == "-") {
 		var err error
@@ -123,10 +128,7 @@ flags:
 			len(due), len(domains), len(domains)-len(due)-len(blocked))
 
 		_, err = sweep.CheckDomains(ctx, db, checker, due, sweep.Options{
-			Limits: sweep.Limits{
-				Every: time.Duration(float64(time.Second) / *rate),
-				Burst: *burst,
-			},
+			Limits:      lims,
 			MaxAttempts: *attempts,
 			Workers:     *workers,
 			Origins:     checker,

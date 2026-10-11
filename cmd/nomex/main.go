@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/khinshankhan/logstox/fields"
 	"github.com/khinshankhan/nomex/controller"
 	"github.com/khinshankhan/nomex/platform"
 	"github.com/khinshankhan/nomex/platform/config"
 	"github.com/khinshankhan/nomex/platform/logx"
+	"github.com/khinshankhan/nomex/sweep"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -104,6 +107,18 @@ func userAgent(v *platform.VersionInfo) string {
 		URL:   config.Contact(),
 		Extra: map[string]string{"service": "rdap"},
 	})
+}
+
+// limits turns -rate and -burst into a per-registry budget.
+func limits(rate float64, burst int) (sweep.Limits, error) {
+	// NOTE: !(rate > 0) also catches NaN
+	if !(rate > 0) || math.IsInf(rate, 0) {
+		return sweep.Limits{}, &usageError{fmt.Sprintf("-rate %g: must be a positive number of queries per second", rate)}
+	}
+	return sweep.Limits{
+		Every: time.Duration(float64(time.Second) / rate),
+		Burst: burst,
+	}, nil
 }
 
 // usageError is a message for a person, not a failure to log.

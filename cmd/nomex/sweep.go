@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/nomex/check/dnschecker"
@@ -48,6 +47,11 @@ flags:
 		return err
 	}
 
+	lims, err := limits(*rate, *burst)
+	if err != nil {
+		return err
+	}
+
 	if err := requireContact(); err != nil {
 		return err
 	}
@@ -76,10 +80,7 @@ flags:
 		registered, available, failed, skipped int64
 	)
 	done, err := sweep.Run(ctx, db, checker, sweep.Options{
-		Limits: sweep.Limits{
-			Every: time.Duration(float64(time.Second) / *rate),
-			Burst: *burst,
-		},
+		Limits:      lims,
 		MaxAttempts: *attempts,
 		Workers:     *workers,
 		Batch:       *batch,
