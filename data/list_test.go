@@ -1,7 +1,9 @@
 package data
 
 import (
+	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -237,4 +239,59 @@ func TestClaimQueries(t *testing.T) {
 			t.Errorf("DueSuffixes = %v, want %v", got, want)
 		}
 	})
+}
+
+// namedQuery returns the SQL for one sqlc query, read from queries/ so the test
+// explains what actually ships.
+func namedQuery(t *testing.T, name string) string {
+	t.Helper()
+
+	b, err := os.ReadFile("../queries/checks.sql")
+	if err != nil {
+		t.Fatalf("read queries: %v", err)
+	}
+	_, rest, found := strings.Cut(string(b), "-- name: "+name+" ")
+	if !found {
+		t.Fatalf("no query named %s", name)
+	}
+	stmt, _, _ := strings.Cut(rest, ";")
+
+	var sb strings.Builder
+	for _, line := range strings.Split(stmt, "\n")[1:] {
+		if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+			sb.WriteString(line + "\n")
+		}
+	}
+	return sb.String()
+}
+
+// The claim runs once per batch for the life of a sweep. Without an index in
+// the claim's order it sorts every due row of the suffix before LIMIT, which
+// measured 270-350ms per batch at 2M rows instead of 0.5ms.
+func TestClaimUsesItsIndex(t *testing.T) {
+	db := openTest(t)
+
+	rows, err := db.sql.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+namedQuery(t, "DueChecksForSuffix"), "dev", 100)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	got := strings.Join(plan, "\n")
+
+	if !strings.Contains(got, "idx_checks_suffix_work") {
+		t.Errorf("claim doesn't use idx_checks_suffix_work:\n%s", got)
+	}
+	if strings.Contains(got, "TEMP B-TREE") {
+		t.Errorf("claim sorts instead of reading in index order:\n%s", got)
+	}
 }
