@@ -3,6 +3,7 @@ package sweep
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -43,6 +44,16 @@ func fastLimiters() *limiters {
 	return newLimiters(Limits{Every: time.Microsecond, Burst: 100})
 }
 
+// spyBackoff records which attempts asked for a delay, and never waits.
+type spyBackoff struct {
+	asked []int
+}
+
+func (s *spyBackoff) Next(attempt int) int64 {
+	s.asked = append(s.asked, attempt)
+	return 0
+}
+
 func TestCheckWithRetry(t *testing.T) {
 	rateLimited := check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true}
 	malformed := check.Result{Status: check.StatusUnknown, Err: errors.New("malformed"), BlockReason: "malformed domain name"}
@@ -55,13 +66,15 @@ func TestCheckWithRetry(t *testing.T) {
 		cancelled bool
 		wantCalls int
 		wantErr   bool
+		wantWaits []int // attempts that backed off before the next try
 	}{
 		// a momentary failure shouldn't cost a full backoff cycle
-		{"retries a transient failure", []check.Result{rateLimited, available}, 3, false, 2, false},
+		{"retries a transient failure", []check.Result{rateLimited, available}, 3, false, 2, false, []int{0}},
 		// it would just fail the same way
-		{"permanent failure isn't retried", []check.Result{malformed}, 5, false, 1, true},
-		{"gives up after max attempts", []check.Result{rateLimited}, 3, false, 3, true},
-		{"stops on cancellation", []check.Result{rateLimited}, 10, true, 1, true},
+		{"permanent failure isn't retried", []check.Result{malformed}, 5, false, 1, true, nil},
+		// no wait after the last attempt, there's nothing left to wait for
+		{"gives up after max attempts", []check.Result{rateLimited}, 3, false, 3, true, []int{0, 1}},
+		{"stops on cancellation", []check.Result{rateLimited}, 10, true, 1, true, []int{0}},
 	}
 
 	for _, tt := range tests {
@@ -73,13 +86,17 @@ func TestCheckWithRetry(t *testing.T) {
 			defer cancel()
 
 			f := newFake(tt.results...)
-			res := checkWithRetry(ctx, f, fastLimiters(), newBackoff(0), "x.dev", "o", tt.attempts)
+			backoff := &spyBackoff{}
+			res := checkWithRetry(ctx, f, fastLimiters(), backoff, "x.dev", "o", tt.attempts)
 
 			if f.calls["x.dev"] != tt.wantCalls {
 				t.Errorf("checked %d times, want %d", f.calls["x.dev"], tt.wantCalls)
 			}
 			if res.Failed() != tt.wantErr {
 				t.Errorf("Err = %v, want error=%v", res.Err, tt.wantErr)
+			}
+			if !slices.Equal(backoff.asked, tt.wantWaits) {
+				t.Errorf("backed off after attempts %v, want %v", backoff.asked, tt.wantWaits)
 			}
 			// the last result comes back as is, so a retryable failure still
 			// gets deferred rather than blocked

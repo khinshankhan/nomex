@@ -75,10 +75,14 @@ func checkWithRetry(
 		select {
 		case <-t.C:
 		case <-ctx.Done():
-			t.Stop()
-			return res
 		}
 		t.Stop()
+
+		// select picks at random when both are ready, so a zero delay could
+		// retry after cancellation without this
+		if ctx.Err() != nil {
+			return res
+		}
 	}
 
 	return res
