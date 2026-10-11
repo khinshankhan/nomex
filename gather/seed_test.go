@@ -186,3 +186,15 @@ func TestSeedCancellationKeepsProgress(t *testing.T) {
 		t.Errorf("after resume: %d rows, want 584 (added %d)", got, n)
 	}
 }
+
+// The last partial batch is written after the loop, and its failure has to
+// reach the caller, or gather reports rows it never wrote.
+func TestSeedReportsWriteErrors(t *testing.T) {
+	db := openDB(t)
+	db.Close()
+
+	spec := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 1}
+	if _, err := Seed(t.Context(), db, spec, SeedOptions{Batch: 100}); err == nil {
+		t.Error("Seed into a closed database returned nil")
+	}
+}
