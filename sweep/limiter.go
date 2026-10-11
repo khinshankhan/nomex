@@ -55,9 +55,9 @@ func newLimiters(l Limits) *limiters {
 	}
 }
 
-// for_ returns the limiter for origin, creating it on first use. Unresolved
+// limiter returns the limiter for origin, creating it on first use. Unresolved
 // origins all share one bucket instead of going unlimited.
-func (l *limiters) for_(origin string) *rate.Limiter {
+func (l *limiters) limiter(origin string) *rate.Limiter {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -80,7 +80,7 @@ func (l *limiters) for_(origin string) *rate.Limiter {
 // NOTE: Reserve instead of Wait, since it reports the delay up front and a
 // query that can't finish in time gets dropped instead of queued.
 func (l *limiters) wait(ctx context.Context, origin string) error {
-	r := l.for_(origin).Reserve()
+	r := l.limiter(origin).Reserve()
 	if !r.OK() {
 		// burst below one request, this can never be satisfied
 		return context.DeadlineExceeded
