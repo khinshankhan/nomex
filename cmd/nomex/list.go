@@ -71,33 +71,24 @@ flags:
 		return fmt.Errorf("list: %w", err)
 	}
 
-	w := io.Writer(os.Stdout)
-	if *out != "" {
-		f, err := os.Create(*out)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		w = f
-	}
-
-	buf := bufio.NewWriter(w)
-	defer buf.Flush()
-
 	var stale int
 	now := time.Now()
-	for _, r := range rows {
-		if r.Stale {
-			stale++
+	err = writeOutput(*out, func(w io.Writer) {
+		for _, r := range rows {
+			if r.Stale {
+				stale++
+			}
+			if !*verbose {
+				fmt.Fprintln(w, r.Domain)
+				continue
+			}
+			fmt.Fprintf(w, "%-24s %-11s %-12s %s\n",
+				r.Domain, r.Status, age(now, r.CheckedAt), staleness(r.Stale, r.Expiration))
 		}
-		if !*verbose {
-			fmt.Fprintln(buf, r.Domain)
-			continue
-		}
-		fmt.Fprintf(buf, "%-24s %-11s %-12s %s\n",
-			r.Domain, r.Status, age(now, r.CheckedAt), staleness(r.Stale, r.Expiration))
+	})
+	if err != nil {
+		return err
 	}
-	buf.Flush()
 
 	// stderr, so it stays out of a redirected list
 	fmt.Fprintf(os.Stderr, "%d rows", len(rows))
@@ -106,6 +97,37 @@ flags:
 	}
 	fmt.Fprintln(os.Stderr)
 	return nil
+}
+
+// writeOutput buffers write to path, or stdout when path is empty. A failed
+// write, flush or close is returned, so a truncated file isn't a success.
+func writeOutput(path string, write func(io.Writer)) error {
+	if path == "" {
+		return flushed(os.Stdout, write)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := flushed(f, write); err != nil {
+		f.Close()
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
+	}
+	return nil
+}
+
+// flushed runs write through a buffer on w.
+//
+// NOTE: a bufio.Writer keeps its first error, so Flush reports any earlier
+// failed write too
+func flushed(w io.Writer, write func(io.Writer)) error {
+	buf := bufio.NewWriter(w)
+	write(buf)
+	return buf.Flush()
 }
 
 func boolArg(b bool) int64 {
