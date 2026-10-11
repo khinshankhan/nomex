@@ -1,6 +1,7 @@
 package data
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -166,4 +167,74 @@ func TestTimestampComparisonsHonourOffsets(t *testing.T) {
 	if len(due) != 0 {
 		t.Errorf("DueChecks returned %v, want nothing due", due)
 	}
+}
+
+// The sweep claims work per suffix: due rows only, never blocked ones, and a
+// live request (higher priority) ahead of the background sweep, then oldest
+// first.
+func TestClaimQueries(t *testing.T) {
+	db := openTest(t)
+	ctx := t.Context()
+
+	past := time.Now().Add(-time.Hour)
+	future := time.Now().Add(time.Hour)
+	rows := []struct {
+		domain   string
+		fresh    time.Time
+		priority int64
+		queued   string
+	}{
+		{"a.dev", past, 0, "2026-01-02 00:00:00"},
+		{"b.dev", past, 100, "2026-01-03 00:00:00"},
+		{"c.dev", past, 0, "2026-01-01 00:00:00"},
+		{"d.dev", future, 100, "2026-01-01 00:00:00"},
+		{"e.dev", past, 100, "2026-01-01 00:00:00"},
+		{"f.com", past, 0, "2026-01-01 00:00:00"},
+	}
+	for _, r := range rows {
+		if err := db.Exec(ctx,
+			`INSERT INTO checks (domain, status, fresh_until, priority, queued_at) VALUES (?, 'unchecked', ?, ?, ?)`,
+			r.domain, sqltime.At(r.fresh), r.priority, r.queued); err != nil {
+			t.Fatalf("seed %s: %v", r.domain, err)
+		}
+	}
+	if err := db.BlockDomain(ctx, sqlcgen.BlockDomainParams{
+		Domain: "e.dev", Reason: "no RDAP server published for this suffix", BlockedAt: sqltime.Now(),
+	}); err != nil {
+		t.Fatalf("block: %v", err)
+	}
+
+	claims := []struct {
+		name   string
+		suffix string
+		limit  int64
+		want   []string
+	}{
+		{"priority, then oldest; fresh and blocked skipped", "dev", 10, []string{"b.dev", "c.dev", "a.dev"}},
+		{"limited", "dev", 2, []string{"b.dev", "c.dev"}},
+		{"other suffix", "com", 10, []string{"f.com"}},
+		{"unknown suffix", "net", 10, nil},
+	}
+	for _, tt := range claims {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := db.DueChecksForSuffix(ctx, sqlcgen.DueChecksForSuffixParams{Suffix: tt.suffix, Limit: tt.limit})
+			if err != nil {
+				t.Fatalf("DueChecksForSuffix: %v", err)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("claimed %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("suffixes with work, most due first", func(t *testing.T) {
+		got, err := db.DueSuffixes(ctx)
+		if err != nil {
+			t.Fatalf("DueSuffixes: %v", err)
+		}
+		want := []sqlcgen.DueSuffixesRow{{Suffix: "dev", Due: 3}, {Suffix: "com", Due: 1}}
+		if !slices.Equal(got, want) {
+			t.Errorf("DueSuffixes = %v, want %v", got, want)
+		}
+	})
 }
