@@ -2,45 +2,14 @@ package gather
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/khinshankhan/nomex/data"
+	"github.com/khinshankhan/nomex/data/datatest"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
-
-func openDB(t *testing.T) *data.DB {
-	t.Helper()
-
-	db, err := data.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
-	entries, err := os.ReadDir("../migrations")
-	if err != nil {
-		t.Fatalf("read migrations: %v", err)
-	}
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".sql") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join("../migrations", e.Name()))
-		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
-		}
-		up, _, _ := strings.Cut(string(b), "-- +goose Down")
-		if err := db.Exec(t.Context(), up); err != nil {
-			t.Fatalf("apply %s: %v", e.Name(), err)
-		}
-	}
-	return db
-}
 
 func count(t *testing.T, db *data.DB) int64 {
 	t.Helper()
@@ -53,7 +22,7 @@ func count(t *testing.T, db *data.DB) int64 {
 
 // Widening a space should only add the new candidates.
 func TestSeedIsIncremental(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	ctx := context.Background()
 
 	// small alphabet keeps this to a few hundred rows
@@ -93,7 +62,7 @@ func TestSeedIsIncremental(t *testing.T) {
 
 // A checked row should survive re-seeding untouched.
 func TestSeedPreservesExistingRows(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	ctx := context.Background()
 
 	spec := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 2}
@@ -132,7 +101,7 @@ func TestSeedPreservesExistingRows(t *testing.T) {
 
 // Seeded rows should be due right away so the sweep picks them up.
 func TestSeedRowsAreDue(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	ctx := context.Background()
 
 	spec := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 1}
@@ -151,7 +120,7 @@ func TestSeedRowsAreDue(t *testing.T) {
 
 // Cancelling keeps what was committed, so the next run resumes.
 func TestSeedCancellationKeepsProgress(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	spec := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 3, Alphabet: "abcdefgh"}
@@ -190,7 +159,7 @@ func TestSeedCancellationKeepsProgress(t *testing.T) {
 // The last partial batch is written after the loop, and its failure has to
 // reach the caller, or gather reports rows it never wrote.
 func TestSeedReportsWriteErrors(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	db.Close()
 
 	spec := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 1}

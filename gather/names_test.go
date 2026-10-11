@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/khinshankhan/nomex/data/datatest"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
 )
 
@@ -58,7 +59,7 @@ func TestReadNamesSkipsBlanksAndComments(t *testing.T) {
 
 // Seeding a chosen list should leave existing rows alone, same as Seed.
 func TestSeedDomainsIsIncremental(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	ctx := t.Context()
 
 	n, err := SeedDomains(ctx, db, []string{"a.com", "b.com"}, 0)

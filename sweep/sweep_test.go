@@ -3,8 +3,6 @@ package sweep
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,36 +10,10 @@ import (
 
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/nomex/data"
+	"github.com/khinshankhan/nomex/data/datatest"
 	"github.com/khinshankhan/nomex/data/sqlcgen"
 	"github.com/khinshankhan/nomex/data/sqltime"
 )
-
-// openDB returns a DB with every migration's Up block applied.
-func openDB(t *testing.T) *data.DB {
-	t.Helper()
-
-	db, err := data.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
-	files, err := filepath.Glob("../migrations/*.sql")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("find migrations: %v", err)
-	}
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatalf("read %s: %v", f, err)
-		}
-		up, _, _ := strings.Cut(string(b), "-- +goose Down")
-		if err := db.Exec(t.Context(), up); err != nil {
-			t.Fatalf("apply %s: %v", f, err)
-		}
-	}
-	return db
-}
 
 type fixedOrigin string
 
@@ -52,7 +24,7 @@ func (o fixedOrigin) Origin(context.Context, string) (string, error) {
 // A throttled registry's domains should be set aside until it reopens, not
 // re-claimed and re-skipped as fast as the loop can spin.
 func TestThrottledDomainsAreDeferred(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	ctx := t.Context()
 	const origin = "https://rdap.example"
 
@@ -109,7 +81,7 @@ func TestThrottledDomainsAreDeferred(t *testing.T) {
 // Once a result can't be saved, the rest of the batch shouldn't be sent to the
 // registry only to be thrown away.
 func TestStoreFailureStopsTheBatch(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 
 	// unseeded, so recording the failed attempt breaks its foreign key
 	domains := []string{"a.dev", "b.dev", "c.dev", "d.dev", "e.dev"}
@@ -166,7 +138,7 @@ func TestPreCheck(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			db := openDB(t)
+			db := datatest.Open(t)
 			ctx := t.Context()
 			seedDue(t, db, "a.dev")
 			// a failure streak whose throttle has already lapsed, so nothing
@@ -217,7 +189,7 @@ func TestRunStops(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			db := openDB(t)
+			db := datatest.Open(t)
 			seedDue(t, db, "a.dev", "b.dev", "c.dev", "d.dev", "e.dev")
 
 			ctx, cancel := context.WithCancel(t.Context())
@@ -255,7 +227,7 @@ func (strayChecker) Check(context.Context, string) check.Result {
 // A write that fails is on us, so the sweep stops and says why instead of
 // carrying on.
 func TestRunReturnsStoreErrors(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	seedDue(t, db, "a.dev")
 
 	_, err := Run(t.Context(), db, strayChecker{}, Options{Limits: fast})
@@ -267,7 +239,7 @@ func TestRunReturnsStoreErrors(t *testing.T) {
 // Old attempts are pruned when a sweep starts, but the last month is kept
 // since it drives the backoff.
 func TestRunPrunesOldAttempts(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	ctx := t.Context()
 	seedDue(t, db, "a.dev")
 	// nothing due, so Run only prunes
@@ -304,7 +276,7 @@ func TestRunPrunesOldAttempts(t *testing.T) {
 
 // Backoff grows with failures from the last week, older ones don't count.
 func TestFailureStreakCountsTheLastWeek(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	ctx := t.Context()
 	seedDue(t, db, "a.dev")
 
@@ -359,7 +331,7 @@ func (c stalledChecker) Check(ctx context.Context, domain string) check.Result {
 // up another one. .dev only answers once every .com domain is done, which
 // deadlocks if the two share workers.
 func TestStalledSuffixDoesNotBlockOthers(t *testing.T) {
-	db := openDB(t)
+	db := datatest.Open(t)
 	// more .dev due, so it's claimed first and the stall is in front of .com
 	seedDue(t, db, "a.dev", "b.dev", "c.dev", "a.com", "b.com")
 
