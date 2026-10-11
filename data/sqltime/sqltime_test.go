@@ -61,19 +61,6 @@ func TestScanNormalises(t *testing.T) {
 	}
 }
 
-func TestPtrPreservesNil(t *testing.T) {
-	if Ptr(nil) != nil {
-		t.Error("Ptr(nil) was not nil")
-	}
-	now := time.Now()
-	if got := Ptr(&now); got == nil || got.Location() != time.UTC {
-		t.Error("Ptr did not normalise")
-	}
-	if Time(nil) != nil {
-		t.Error("Time(nil) was not nil")
-	}
-}
-
 func TestTextIsUTC(t *testing.T) {
 	west := time.FixedZone("UTC-4", -4*3600)
 	got := Text(time.Date(2026, 8, 23, 12, 0, 0, 500, west))

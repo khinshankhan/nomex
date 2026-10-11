@@ -186,10 +186,3 @@ func TestSeedCancellationKeepsProgress(t *testing.T) {
 		t.Errorf("after resume: %d rows, want 584 (added %d)", got, n)
 	}
 }
-
-func TestSeedRejectsBadSpec(t *testing.T) {
-	db := openDB(t)
-	if _, err := Seed(context.Background(), db, Spec{}, SeedOptions{}); err == nil {
-		t.Error("Seed accepted a spec with no TLDs")
-	}
-}

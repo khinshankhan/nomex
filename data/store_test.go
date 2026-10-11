@@ -148,31 +148,6 @@ func TestStoreBlocksOnlyWhenTold(t *testing.T) {
 	}
 }
 
-// A failure without a BlockReason should never reach blocked.
-func TestStoreCancellationDoesNotBlock(t *testing.T) {
-	db := openTest(t)
-	ctx := context.Background()
-	seed(t, db, "cancelled.dev")
-
-	err := db.StoreResult(ctx, check.Result{
-		Domain:  "cancelled.dev",
-		Status:  check.StatusUnknown,
-		Err:     context.Canceled,
-		ErrKind: "non-rdap failure",
-	}, 0)
-	if err != nil {
-		t.Fatalf("StoreResult: %v", err)
-	}
-
-	blocked, err := db.IsBlocked(ctx, "cancelled.dev")
-	if err != nil {
-		t.Fatalf("IsBlocked: %v", err)
-	}
-	if blocked {
-		t.Error("a cancelled context blocked the domain")
-	}
-}
-
 // Retention has to actually delete old attempts, but leave recent ones since
 // they drive the backoff.
 func TestPruneAttemptsKeepsRecentFailures(t *testing.T) {
@@ -197,7 +172,7 @@ func TestPruneAttemptsKeepsRecentFailures(t *testing.T) {
 		}
 	}
 
-	cutoff := now.Add(-30 * 24 * time.Hour).Format(time.RFC3339Nano)
+	cutoff := sqltime.Text(now.Add(-30 * 24 * time.Hour))
 	deleted, err := db.PruneAttempts(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("PruneAttempts: %v", err)

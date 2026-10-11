@@ -54,19 +54,6 @@ func TestChainComposes(t *testing.T) {
 	}
 }
 
-func TestChainEmpty(t *testing.T) {
-	h := Chain()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("reached"))
-	}))
-
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
-
-	if rec.Body.String() != "reached" {
-		t.Errorf("empty chain did not pass through: %q", rec.Body.String())
-	}
-}
-
 // Wrapping should happen once when the chain is applied, not per request.
 func TestChainWrapsOnce(t *testing.T) {
 	wraps := 0

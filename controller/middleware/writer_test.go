@@ -56,8 +56,6 @@ func TestWrappersPreserveCapabilities(t *testing.T) {
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
-	mux := http.NewServeMux()
-
 	wrapped := map[string]func(http.Handler) http.Handler{
 		"Recover":   Recover,
 		"BlackHole": BlackHole("/api"),
@@ -105,7 +103,6 @@ func TestWrappersPreserveCapabilities(t *testing.T) {
 		})
 	}
 
-	_ = mux
 }
 
 // Forwarding should reach the underlying writer, not just type assert.
@@ -162,37 +159,42 @@ func (b bareWriter) WriteHeader(code int) {
 	b.rec.WriteHeader(code)
 }
 
-// Flush and ReadFrom start the response without Write, so a later panic
-// shouldn't try to rewrite the status.
-func TestRecoverAfterFlushAndReadFrom(t *testing.T) {
+// Once a response has started its status can't change, so a panic just cuts
+// it off. Flush and ReadFrom start it without going through Write.
+func TestRecoverAfterResponseStarted(t *testing.T) {
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
-	t.Run("panic after Flush", func(t *testing.T) {
-		fw := newFullWriter()
-		Recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tests := []struct {
+		name  string
+		start func(w http.ResponseWriter)
+	}{
+		{"after Write", func(w http.ResponseWriter) {
+			w.Write([]byte("partial"))
+		}},
+		{"after Flush", func(w http.ResponseWriter) {
 			w.WriteHeader(http.StatusOK)
 			http.NewResponseController(w).Flush()
-			panic("boom")
-		})).ServeHTTP(fw, httptest.NewRequest("GET", "/", nil))
-
-		if fw.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200 (already sent)", fw.Code)
-		}
-		if strings.Contains(fw.Body.String(), "Internal Server Error") {
-			t.Errorf("appended an error after flushing: %q", fw.Body.String())
-		}
-	})
-
-	t.Run("panic after ReadFrom", func(t *testing.T) {
-		fw := newFullWriter()
-		Recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		}},
+		{"after ReadFrom", func(w http.ResponseWriter) {
 			io.Copy(w, strings.NewReader("partial"))
-			panic("boom")
-		})).ServeHTTP(fw, httptest.NewRequest("GET", "/", nil))
+		}},
+	}
 
-		if strings.Contains(fw.Body.String(), "Internal Server Error") {
-			t.Errorf("appended an error after ReadFrom: %q", fw.Body.String())
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fw := newFullWriter()
+			Recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tt.start(w)
+				panic("boom")
+			})).ServeHTTP(fw, httptest.NewRequest("GET", "/", nil))
+
+			if fw.Code != http.StatusOK {
+				t.Errorf("status = %d, want 200 (already sent)", fw.Code)
+			}
+			if strings.Contains(fw.Body.String(), "Internal Server Error") {
+				t.Errorf("appended an error to a started response: %q", fw.Body.String())
+			}
+		})
+	}
 }

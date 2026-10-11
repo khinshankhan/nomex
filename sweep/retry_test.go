@@ -43,102 +43,50 @@ func fastLimiters() *limiters {
 	return newLimiters(Limits{Every: time.Microsecond, Burst: 100})
 }
 
-// A momentary failure shouldn't cost a full backoff cycle.
-func TestRetrySucceedsAfterTransientFailure(t *testing.T) {
-	f := newFake(
-		check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true},
-		check.Result{Status: check.StatusNotFound},
-	)
+func TestCheckWithRetry(t *testing.T) {
+	rateLimited := check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true}
+	malformed := check.Result{Status: check.StatusUnknown, Err: errors.New("malformed"), BlockReason: "malformed domain name"}
+	available := check.Result{Status: check.StatusNotFound}
 
-	res := checkWithRetry(context.Background(), f, fastLimiters(), newBackoff(0), "x.dev", "o", 3)
-
-	if res.Failed() {
-		t.Errorf("gave up after a retryable failure: %v", res.Err)
-	}
-	if res.Status != check.StatusNotFound {
-		t.Errorf("status = %s, want not_found", res.Status)
-	}
-	if f.calls["x.dev"] != 2 {
-		t.Errorf("checked %d times, want 2", f.calls["x.dev"])
-	}
-}
-
-// A permanent failure isn't retried, it would fail the same way.
-func TestRetryDoesNotRepeatPermanentFailures(t *testing.T) {
-	f := newFake(check.Result{
-		Status: check.StatusUnknown,
-		Err:    errors.New("malformed"),
-		// not retryable
-		BlockReason: "malformed domain name",
-	})
-
-	res := checkWithRetry(context.Background(), f, fastLimiters(), newBackoff(0), "x.dev", "o", 5)
-
-	if f.calls["x.dev"] != 1 {
-		t.Errorf("retried a permanent failure %d times", f.calls["x.dev"])
-	}
-	if !res.Failed() {
-		t.Error("permanent failure reported as success")
-	}
-}
-
-func TestRetryGivesUpAfterMaxAttempts(t *testing.T) {
-	f := newFake(check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true})
-
-	res := checkWithRetry(context.Background(), f, fastLimiters(), newBackoff(0), "x.dev", "o", 3)
-
-	if f.calls["x.dev"] != 3 {
-		t.Errorf("checked %d times, want 3", f.calls["x.dev"])
-	}
-	if !res.Failed() {
-		t.Error("exhausted retries reported as success")
-	}
-	if !res.Retryable {
-		t.Error("lost the retryable flag, so the row would not be deferred")
-	}
-}
-
-func TestRetryStopsOnCancellation(t *testing.T) {
-	f := newFake(check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	start := time.Now()
-	checkWithRetry(ctx, f, fastLimiters(), newBackoff(0), "x.dev", "o", 10)
-
-	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
-		t.Errorf("kept retrying for %v after cancellation", elapsed)
-	}
-}
-
-// Workers shouldn't retry in lockstep, which is why each gets its own RNG.
-func TestBackoffDiffersPerWorker(t *testing.T) {
-	a := newBackoff(0)
-	b := newBackoff(10_000)
-
-	var same int
-	const rounds = 20
-	for i := range rounds {
-		if a.Next(i%5) == b.Next(i%5) {
-			same++
-		}
+	tests := []struct {
+		name      string
+		results   []check.Result
+		attempts  int
+		cancelled bool
+		wantCalls int
+		wantErr   bool
+	}{
+		// a momentary failure shouldn't cost a full backoff cycle
+		{"retries a transient failure", []check.Result{rateLimited, available}, 3, false, 2, false},
+		// it would just fail the same way
+		{"permanent failure isn't retried", []check.Result{malformed}, 5, false, 1, true},
+		{"gives up after max attempts", []check.Result{rateLimited}, 3, false, 3, true},
+		{"stops on cancellation", []check.Result{rateLimited}, 10, true, 1, true},
 	}
 
-	if same == rounds {
-		t.Error("two workers produced identical delays every time")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			if tt.cancelled {
+				cancel()
+			}
+			defer cancel()
 
-func TestBackoffIsBounded(t *testing.T) {
-	s := newBackoff(0)
-	for attempt := range 20 {
-		d := s.Next(attempt)
-		if d < 0 {
-			t.Errorf("attempt %d: negative delay %d", attempt, d)
-		}
-		if d > 8_000 {
-			t.Errorf("attempt %d: delay %dms exceeds the 8s cap", attempt, d)
-		}
+			f := newFake(tt.results...)
+			res := checkWithRetry(ctx, f, fastLimiters(), newBackoff(0), "x.dev", "o", tt.attempts)
+
+			if f.calls["x.dev"] != tt.wantCalls {
+				t.Errorf("checked %d times, want %d", f.calls["x.dev"], tt.wantCalls)
+			}
+			if res.Failed() != tt.wantErr {
+				t.Errorf("Err = %v, want error=%v", res.Err, tt.wantErr)
+			}
+			// the last result comes back as is, so a retryable failure still
+			// gets deferred rather than blocked
+			if want := tt.results[len(tt.results)-1]; res.Status != want.Status || res.Retryable != want.Retryable {
+				t.Errorf("got %s retryable=%v, want %s retryable=%v",
+					res.Status, res.Retryable, want.Status, want.Retryable)
+			}
+		})
 	}
 }

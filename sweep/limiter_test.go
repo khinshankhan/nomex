@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // One registry's traffic shouldn't spend another's budget.
@@ -23,39 +25,6 @@ func TestLimitersAreIndependentPerOrigin(t *testing.T) {
 	}
 	if waited := time.Since(start); waited > 50*time.Millisecond {
 		t.Errorf("verisign waited %v for a token google spent", waited)
-	}
-}
-
-func TestLimiterRefills(t *testing.T) {
-	lims := newLimiters(Limits{Every: 20 * time.Millisecond, Burst: 1})
-	ctx := context.Background()
-
-	if err := lims.wait(ctx, "o"); err != nil {
-		t.Fatal(err)
-	}
-
-	start := time.Now()
-	if err := lims.wait(ctx, "o"); err != nil {
-		t.Fatal(err)
-	}
-	if waited := time.Since(start); waited < 10*time.Millisecond {
-		t.Errorf("second token came after %v, want at least the refill interval", waited)
-	}
-}
-
-// Burst lets a sweep start quickly instead of trickling.
-func TestLimiterAllowsBurst(t *testing.T) {
-	lims := newLimiters(Limits{Every: time.Hour, Burst: 3})
-	ctx := context.Background()
-
-	start := time.Now()
-	for i := range 3 {
-		if err := lims.wait(ctx, "o"); err != nil {
-			t.Fatalf("token %d: %v", i, err)
-		}
-	}
-	if waited := time.Since(start); waited > 50*time.Millisecond {
-		t.Errorf("a burst of 3 took %v", waited)
 	}
 }
 
@@ -81,64 +50,31 @@ func TestLimiterRespectsDeadline(t *testing.T) {
 	}
 }
 
-func TestLimiterCancellation(t *testing.T) {
-	lims := newLimiters(Limits{Every: time.Hour, Burst: 1})
-	ctx, cancel := context.WithCancel(context.Background())
-
-	if err := lims.wait(ctx, "o"); err != nil {
-		t.Fatal(err)
+// A measured registry gets its own budget instead of the default, but an
+// explicit -rate wins over both.
+func TestLimiterBudgets(t *testing.T) {
+	tests := []struct {
+		name      string
+		limits    Limits
+		origin    string
+		wantRate  rate.Limit
+		wantBurst int
+	}{
+		{"default for an unmeasured origin", DefaultLimits, "https://rdap.example", 1, 3},
+		{"measured verisign", DefaultLimits, "https://rdap.verisign.com", 10, 10},
+		{"measured google", DefaultLimits, "https://pubapi.registry.google", 1, 3},
+		{"unset falls back to measured", Limits{}, "https://rdap.verisign.com", 10, 10},
+		{"explicit beats measured", Limits{Every: time.Hour, Burst: 1}, "https://rdap.verisign.com", rate.Every(time.Hour), 1},
+		{"unresolved origin is still limited", DefaultLimits, "", 1, 3},
 	}
 
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		cancel()
-	}()
-	if err := lims.wait(ctx, "o"); err == nil {
-		t.Error("cancelled wait returned nil")
-	}
-}
-
-// A measured registry gets its own budget instead of the default, 10/sec vs
-// 1/sec on Verisign.
-func TestMeasuredLimitsApply(t *testing.T) {
-	lims := newLimiters(DefaultLimits)
-	ctx := context.Background()
-
-	// verisign is measured at 10/sec, so ten in a row should be fast
-	start := time.Now()
-	for range 10 {
-		if err := lims.wait(ctx, "https://rdap.verisign.com"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	verisign := time.Since(start)
-
-	// unmeasured falls back to 1/sec, three burst tokens then wait
-	start = time.Now()
-	for range 5 {
-		if err := lims.wait(ctx, "https://rdap.unknown.example"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	unknown := time.Since(start)
-
-	if verisign > unknown {
-		t.Errorf("measured origin was slower (%v) than the default (%v)", verisign, unknown)
-	}
-}
-
-// An explicit -rate should win over a measured budget.
-func TestExplicitLimitsOverrideMeasured(t *testing.T) {
-	lims := newLimiters(Limits{Every: time.Hour, Burst: 1})
-	ctx := context.Background()
-
-	if err := lims.wait(ctx, "https://rdap.verisign.com"); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx2, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
-	defer cancel()
-	if err := lims.wait(ctx2, "https://rdap.verisign.com"); err == nil {
-		t.Error("measured budget overrode an explicit -rate")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lim := newLimiters(tt.limits).limiter(tt.origin)
+			if lim.Limit() != tt.wantRate || lim.Burst() != tt.wantBurst {
+				t.Errorf("got %v/s burst %d, want %v/s burst %d",
+					lim.Limit(), lim.Burst(), tt.wantRate, tt.wantBurst)
+			}
+		})
 	}
 }

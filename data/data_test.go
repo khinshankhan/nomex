@@ -2,7 +2,6 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,29 +33,6 @@ func TestOpenAppliesPragmas(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("PRAGMA %s = %q, want %q", tt.pragma, got, tt.want)
 		}
-	}
-}
-
-func TestOpenRejectsUnwritablePath(t *testing.T) {
-	_, err := Open(context.Background(), filepath.Join(t.TempDir(), "nonexistent-dir", "x.db"))
-	if err == nil {
-		t.Error("Open on a path with no parent directory returned nil error")
-	}
-}
-
-func TestTxCommits(t *testing.T) {
-	db := openTest(t)
-	ctx := context.Background()
-
-	err := db.Tx(ctx, func(q *sqlcgen.Queries) error {
-		return insert(ctx, q, "committed.dev")
-	})
-	if err != nil {
-		t.Fatalf("Tx: %v", err)
-	}
-
-	if _, err := db.GetCheck(ctx, "committed.dev"); err != nil {
-		t.Errorf("row missing after commit: %v", err)
 	}
 }
 

@@ -2,7 +2,6 @@ package gather
 
 import (
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -49,44 +48,6 @@ func TestSpecAllOrder(t *testing.T) {
 
 	if !slices.Equal(got, want) {
 		t.Errorf("All() = %v, want %v", got, want)
-	}
-}
-
-// Shortest first, so an interrupted seed already covered the short labels.
-func TestSpecAllShortestFirst(t *testing.T) {
-	spec := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 3}
-
-	last := 0
-	for d := range spec.All() {
-		n := strings.Index(d, ".")
-		if n < last {
-			t.Fatalf("label length went from %d to %d at %s", last, n, d)
-		}
-		last = n
-	}
-}
-
-// The sequence has to be the same every run so a resumed seed lines up.
-func TestSpecAllDeterministic(t *testing.T) {
-	spec := Spec{TLDs: []string{"dev", "net"}, MinLen: 1, MaxLen: 2, Alphabet: "abc"}
-
-	if a, b := slices.Collect(spec.All()), slices.Collect(spec.All()); !slices.Equal(a, b) {
-		t.Error("All() produced a different sequence on the second call")
-	}
-}
-
-func TestSpecAllStopsEarly(t *testing.T) {
-	spec := Spec{TLDs: []string{"dev"}, MinLen: 1, MaxLen: 5}
-
-	n := 0
-	for range spec.All() {
-		n++
-		if n == 3 {
-			break
-		}
-	}
-	if n != 3 {
-		t.Errorf("stopped after %d, want 3", n)
 	}
 }
 

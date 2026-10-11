@@ -40,25 +40,6 @@ func TestRecover(t *testing.T) {
 		}
 	})
 
-	t.Run("status is not rewritten after a partial write", func(t *testing.T) {
-		// once a 200 and some body are sent the status can't change, so the
-		// response just gets cut off
-		h := Recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("partial"))
-			panic("boom")
-		}))
-
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
-
-		if rec.Code != 200 {
-			t.Errorf("status = %d, want 200 (already sent)", rec.Code)
-		}
-		if got := rec.Body.String(); strings.Contains(got, "Internal Server Error") {
-			t.Errorf("appended an error to an already-started body: %q", got)
-		}
-	})
-
 	t.Run("ErrAbortHandler is re-panicked", func(t *testing.T) {
 		defer func() {
 			if err := recover(); err != http.ErrAbortHandler {

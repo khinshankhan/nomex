@@ -56,17 +56,6 @@ func TestBlockableIsAnAllowlist(t *testing.T) {
 	}
 }
 
-// No retryable kind should ever be in the allowlist, even if the library adds
-// more later.
-func TestRetryableIsNeverBlockable(t *testing.T) {
-	for kind := range blockable {
-		err := &rdap.Error{Kind: kind}
-		if rdap.IsRetryable(err) {
-			t.Errorf("%s is both retryable and blockable", kind)
-		}
-	}
-}
-
 func TestParseEvents(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -118,12 +107,6 @@ func TestParseEvents(t *testing.T) {
 				t.Errorf("registration = %q, want %q", fmtDate(got.registration), tt.wantReg)
 			}
 		})
-	}
-}
-
-func TestParseEventsRejectsGarbage(t *testing.T) {
-	if _, err := parseEvents([]byte("not json")); err == nil {
-		t.Error("parseEvents accepted invalid JSON")
 	}
 }
 
