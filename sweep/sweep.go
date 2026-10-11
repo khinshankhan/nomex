@@ -80,6 +80,20 @@ type Options struct {
 	Origins OriginResolver
 }
 
+// withDefaults fills in zero values.
+func (o Options) withDefaults() Options {
+	if o.Workers <= 0 {
+		o.Workers = DefaultWorkers
+	}
+	if o.Batch <= 0 {
+		o.Batch = DefaultBatch
+	}
+	if o.MaxAttempts <= 0 {
+		o.MaxAttempts = DefaultMaxAttempts
+	}
+	return o
+}
+
 // OriginResolver reports which server serves a domain, without querying it.
 type OriginResolver interface {
 	Origin(ctx context.Context, domain string) (string, error)
@@ -102,19 +116,7 @@ type Stat struct {
 // Run sweeps until the context is cancelled, the limit is reached, or one round
 // completes when Once is set.
 func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) (int64, error) {
-	workers := opts.Workers
-	if workers <= 0 {
-		workers = DefaultWorkers
-	}
-	batch := opts.Batch
-	if batch <= 0 {
-		batch = DefaultBatch
-	}
-
-	attempts := opts.MaxAttempts
-	if attempts <= 0 {
-		attempts = DefaultMaxAttempts
-	}
+	opts = opts.withDefaults()
 
 	// one limiter per origin, created on first use
 	lims := newLimiters(opts.Limits)
@@ -168,7 +170,7 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 			return done, err
 		}
 
-		n, err := sweepRound(ctx, db, checker, suffixes, lims, attempts, workers, opts, done, start, throttled)
+		n, err := sweepRound(ctx, db, checker, suffixes, lims, opts, done, start, throttled)
 		done = n
 		if err != nil {
 			return done, err
@@ -191,8 +193,6 @@ func sweepRound(
 	checker check.Checker,
 	suffixes []sqlcgen.DueSuffixesRow,
 	lims *limiters,
-	attempts int,
-	workers int,
 	opts Options,
 	done int64,
 	start time.Time,
@@ -213,11 +213,6 @@ func sweepRound(
 		go func(suffix string) {
 			defer wg.Done()
 
-			batch := opts.Batch
-			if batch <= 0 {
-				batch = DefaultBatch
-			}
-
 			// keep claiming until this suffix runs dry, so a fast registry
 			// doesn't sit waiting on a slow one between rounds
 			for {
@@ -230,7 +225,7 @@ func sweepRound(
 
 				domains, err := db.DueChecksForSuffix(ctx, sqlcgen.DueChecksForSuffixParams{
 					Suffix: suffix,
-					Limit:  int64(batch),
+					Limit:  int64(opts.Batch),
 				})
 				if err != nil {
 					mu.Lock()
@@ -244,7 +239,7 @@ func sweepRound(
 					return
 				}
 
-				if err := round(ctx, db, checker, domains, lims, attempts, workers, opts, &total, start, throttled, &mu); err != nil {
+				if err := round(ctx, db, checker, domains, lims, opts, &total, start, throttled, &mu); err != nil {
 					mu.Lock()
 					if firstErr == nil {
 						firstErr = err
@@ -275,8 +270,6 @@ func round(
 	checker check.Checker,
 	domains []string,
 	lims *limiters,
-	attempts int,
-	workers int,
 	opts Options,
 	total *atomic.Int64,
 	start time.Time,
@@ -291,7 +284,7 @@ func round(
 	var failed atomic.Bool
 
 	var wg sync.WaitGroup
-	for w := range workers {
+	for w := range opts.Workers {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
@@ -347,7 +340,7 @@ func round(
 					}
 				}
 				if res.Status == check.StatusUnchecked || res.Status == "" {
-					res = checkWithRetry(ctx, checker, lims, backoff, domain, origin, attempts)
+					res = checkWithRetry(ctx, checker, lims, backoff, domain, origin, opts.MaxAttempts)
 				}
 
 				failures := 0
@@ -469,14 +462,7 @@ func Cancelled(err error) bool {
 // Every domain needs a row already, so seed them first. Limit, Once and Batch
 // are ignored.
 func CheckDomains(ctx context.Context, db *data.DB, checker check.Checker, domains []string, opts Options) (int64, error) {
-	workers := opts.Workers
-	if workers <= 0 {
-		workers = DefaultWorkers
-	}
-	attempts := opts.MaxAttempts
-	if attempts <= 0 {
-		attempts = DefaultMaxAttempts
-	}
+	opts = opts.withDefaults()
 	opts.Limit = 0
 
 	throttled, err := db.Throttled(ctx)
@@ -488,6 +474,6 @@ func CheckDomains(ctx context.Context, db *data.DB, checker check.Checker, domai
 		total atomic.Int64
 		mu    sync.Mutex
 	)
-	err = round(ctx, db, checker, domains, newLimiters(opts.Limits), attempts, workers, opts, &total, time.Now(), throttled, &mu)
+	err = round(ctx, db, checker, domains, newLimiters(opts.Limits), opts, &total, time.Now(), throttled, &mu)
 	return total.Load(), err
 }
