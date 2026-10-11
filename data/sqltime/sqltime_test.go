@@ -73,3 +73,11 @@ func TestPtrPreservesNil(t *testing.T) {
 		t.Error("Time(nil) was not nil")
 	}
 }
+
+func TestTextIsUTC(t *testing.T) {
+	west := time.FixedZone("UTC-4", -4*3600)
+	got := Text(time.Date(2026, 8, 23, 12, 0, 0, 500, west))
+	if want := "2026-08-23T16:00:00.0000005Z"; got != want {
+		t.Errorf("Text = %q, want %q", got, want)
+	}
+}

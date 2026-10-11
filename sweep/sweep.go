@@ -376,9 +376,7 @@ func (s *sweeper) checkOne(ctx context.Context, backoff jitter.Strategy, domain 
 func recentFailures(ctx context.Context, db *data.DB, domain string) int {
 	n, err := db.CountRecentFailures(ctx, sqlcgen.CountRecentFailuresParams{
 		Domain: domain,
-		// text since the query casts it for datetime(), and RFC 3339 matches
-		// what the driver writes
-		Since: time.Now().Add(-failureWindow).UTC().Format(time.RFC3339Nano),
+		Since:  sqltime.Text(time.Now().Add(-failureWindow)),
 	})
 	if err != nil {
 		logx.Default().Named("sweep").Warn("counting failures",
@@ -389,10 +387,9 @@ func recentFailures(ctx context.Context, db *data.DB, domain string) int {
 	return int(n)
 }
 
-// pruneCutoff formats the retention boundary as RFC3339Nano, which matches what
-// the driver writes since PruneAttempts compares it as text.
+// pruneCutoff is the retention boundary.
 func pruneCutoff() string {
-	return time.Now().Add(-AttemptRetention).UTC().Format(time.RFC3339Nano)
+	return sqltime.Text(time.Now().Add(-AttemptRetention))
 }
 
 func sleep(ctx context.Context, d time.Duration) error {

@@ -37,6 +37,12 @@ func Ptr(t *time.Time) *UTC {
 	return &UTC{t.UTC()}
 }
 
+// Text formats t the way the driver writes it, for query parameters that are
+// compared as text.
+func Text(t time.Time) string {
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
 // Time unwraps u, or returns nil.
 func Time(u *UTC) *time.Time {
 	if u == nil {
