@@ -36,16 +36,43 @@ type Checker struct {
 	resolver *bootstrap.Resolver
 }
 
+// Option configures a Checker.
+type Option func(*options)
+
+type options struct {
+	bootstrap []bootstrap.Option
+	client    []rdap.ClientOption
+}
+
+// WithBootstrap configures the bootstrap resolver, applied after the defaults.
+func WithBootstrap(opts ...bootstrap.Option) Option {
+	return func(o *options) {
+		o.bootstrap = append(o.bootstrap, opts...)
+	}
+}
+
+// WithClient configures the RDAP client, applied after the defaults.
+func WithClient(opts ...rdap.ClientOption) Option {
+	return func(o *options) {
+		o.client = append(o.client, opts...)
+	}
+}
+
 // New returns a Checker using the given user agent. The library requires one
 // since registries rate limit or block anonymous clients, and an operator
 // should be able to reach whoever is querying them.
-func New(userAgent string, opts ...rdap.ClientOption) (*Checker, error) {
+func New(userAgent string, opts ...Option) (*Checker, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	// disk cached so each run doesn't refetch the IANA registry
 	cache, err := bootstrap.NewDiskCache("")
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap cache: %w", err)
 	}
-	resolver, err := bootstrap.NewResolver(bootstrap.WithCache(cache))
+	resolver, err := bootstrap.NewResolver(append([]bootstrap.Option{bootstrap.WithCache(cache)}, o.bootstrap...)...)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap resolver: %w", err)
 	}
@@ -54,7 +81,7 @@ func New(userAgent string, opts ...rdap.ClientOption) (*Checker, error) {
 		rdap.WithUserAgent(userAgent),
 		rdap.WithResolver(resolver),
 	}
-	client, err := rdap.New(append(defaults, opts...)...)
+	client, err := rdap.New(append(defaults, o.client...)...)
 	if err != nil {
 		return nil, fmt.Errorf("rdap client: %w", err)
 	}
