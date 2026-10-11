@@ -55,7 +55,8 @@ func (s *spyBackoff) Next(attempt int) int64 {
 }
 
 func TestCheckWithRetry(t *testing.T) {
-	rateLimited := check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true}
+	transient := check.Result{Status: check.StatusUnknown, Err: errors.New("503"), Retryable: true}
+	throttled := check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true, Throttled: true}
 	malformed := check.Result{Status: check.StatusUnknown, Err: errors.New("malformed"), BlockReason: "malformed domain name"}
 	available := check.Result{Status: check.StatusNotFound}
 	shortWait := check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true, RetryAfter: time.Millisecond}
@@ -69,11 +70,13 @@ func TestCheckWithRetry(t *testing.T) {
 		wantErr   bool
 		wantWaits []int // attempts that backed off before the next try
 	}{
-		{"retries a transient failure", []check.Result{rateLimited, available}, 3, false, 2, false, []int{0}},
+		{"retries a transient failure", []check.Result{transient, available}, 3, false, 2, false, []int{0}},
 		{"permanent failure isn't retried", []check.Result{malformed}, 5, false, 1, true, nil},
 		// no wait after the last attempt
-		{"gives up after max attempts", []check.Result{rateLimited}, 3, false, 3, true, []int{0, 1}},
-		{"stops on cancellation", []check.Result{rateLimited}, 10, true, 1, true, []int{0}},
+		{"gives up after max attempts", []check.Result{transient}, 3, false, 3, true, []int{0, 1}},
+		{"stops on cancellation", []check.Result{transient}, 10, true, 1, true, []int{0}},
+		// the caller throttles the whole server instead
+		{"throttled failure isn't retried", []check.Result{throttled}, 3, false, 1, true, nil},
 		{"waits out a short Retry-After", []check.Result{shortWait, available}, 3, false, 2, false, []int{0}},
 	}
 

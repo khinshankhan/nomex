@@ -32,7 +32,8 @@ func newBackoff(seed int64) jitter.Strategy {
 	return s
 }
 
-// checkWithRetry queries a domain, retrying failures marked retryable.
+// checkWithRetry queries a domain, retrying failures marked retryable unless the
+// server is throttling us.
 func checkWithRetry(
 	ctx context.Context,
 	checker check.Checker,
@@ -58,6 +59,10 @@ func checkWithRetry(
 
 		res = checker.Check(ctx, domain)
 		if !res.Failed() || !res.Retryable {
+			return res
+		}
+		// the server is pushing back, the caller throttles all of it
+		if res.Throttled {
 			return res
 		}
 		if attempt == maxAttempts-1 {
