@@ -165,10 +165,11 @@ func Run(ctx context.Context, db *data.DB, checker check.Checker, opts Options) 
 		}
 
 		// once per round, a stale answer costs at most one wasted query
-		throttled, err := db.Throttled(ctx)
+		until, err := db.Throttled(ctx)
 		if err != nil {
 			return done, err
 		}
+		throttled := newThrottles(until)
 
 		n, err := sweepRound(ctx, db, checker, suffixes, lims, opts, done, start, throttled)
 		done = n
@@ -196,7 +197,7 @@ func sweepRound(
 	opts Options,
 	done int64,
 	start time.Time,
-	throttled map[string]time.Time,
+	throttled *throttles,
 ) (int64, error) {
 	// atomic since pipelines run concurrently and share the running total
 	var total atomic.Int64
@@ -273,7 +274,7 @@ func round(
 	opts Options,
 	total *atomic.Int64,
 	start time.Time,
-	throttled map[string]time.Time,
+	throttled *throttles,
 	mu *sync.Mutex,
 ) error {
 	work := make(chan string)
@@ -306,10 +307,7 @@ func round(
 						origin = o
 					}
 				}
-				mu.Lock()
-				until, blocked := throttled[origin]
-				mu.Unlock()
-				if blocked && origin != "" && time.Now().Before(until) {
+				if until, blocked := throttled.active(origin, time.Now()); blocked {
 					// push it past the throttle, otherwise it stays due and the
 					// next claim hands back the same rows to skip again
 					if err := db.DeferCheck(ctx, sqlcgen.DeferCheckParams{
@@ -356,15 +354,8 @@ func round(
 				if serr != nil && err == nil {
 					err = serr
 				}
-				if !nextTry.IsZero() && res.Origin != "" {
-					// apply it to the rest of this round too, not just the next
-					// reload
-					mu.Lock()
-					if cur, ok := throttled[res.Origin]; !ok || nextTry.After(cur) {
-						throttled[res.Origin] = nextTry
-					}
-					mu.Unlock()
-				}
+				// apply it to the rest of this round too, not just the next reload
+				throttled.extend(res.Origin, nextTry)
 
 				if err != nil {
 					mu.Lock()
@@ -465,7 +456,7 @@ func CheckDomains(ctx context.Context, db *data.DB, checker check.Checker, domai
 	opts = opts.withDefaults()
 	opts.Limit = 0
 
-	throttled, err := db.Throttled(ctx)
+	until, err := db.Throttled(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -474,6 +465,6 @@ func CheckDomains(ctx context.Context, db *data.DB, checker check.Checker, domai
 		total atomic.Int64
 		mu    sync.Mutex
 	)
-	err = round(ctx, db, checker, domains, newLimiters(opts.Limits), opts, &total, time.Now(), throttled, &mu)
+	err = round(ctx, db, checker, domains, newLimiters(opts.Limits), opts, &total, time.Now(), newThrottles(until), &mu)
 	return total.Load(), err
 }
