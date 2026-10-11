@@ -127,6 +127,10 @@ type sweeper struct {
 
 	// done is shared by every pipeline's workers
 	done atomic.Int64
+
+	// claimed counts checks started, so Limit holds with several workers
+	// mid-check
+	claimed atomic.Int64
 }
 
 func newSweeper(db *data.DB, checker check.Checker, opts Options) *sweeper {
@@ -140,9 +144,14 @@ func newSweeper(db *data.DB, checker check.Checker, opts Options) *sweeper {
 	}
 }
 
-// limitReached reports whether Limit checks have been done.
+// limitReached reports whether Limit checks have been started.
 func (s *sweeper) limitReached() bool {
-	return s.opts.Limit > 0 && s.done.Load() >= s.opts.Limit
+	return s.opts.Limit > 0 && s.claimed.Load() >= s.opts.Limit
+}
+
+// claim takes one of Limit's checks, reporting false once they're all taken.
+func (s *sweeper) claim() bool {
+	return s.opts.Limit <= 0 || s.claimed.Add(1) <= s.opts.Limit
 }
 
 // Run sweeps until the context is cancelled, the limit is reached, or one round
@@ -321,6 +330,10 @@ func (s *sweeper) checkOne(ctx context.Context, backoff jitter.Strategy, domain 
 		}); err != nil {
 			return fmt.Errorf("defer %s: %w", domain, err)
 		}
+		return nil
+	}
+
+	if !s.claim() {
 		return nil
 	}
 

@@ -129,33 +129,207 @@ func TestStoreFailureStopsTheBatch(t *testing.T) {
 	}
 }
 
-// A DNS hit never reached the RDAP server, so it says nothing about that
+// seedDue seeds domains that are due now.
+func seedDue(t *testing.T, db *data.DB, domains ...string) {
+	t.Helper()
+	for _, d := range domains {
+		if _, err := db.SeedCheck(t.Context(), sqlcgen.SeedCheckParams{
+			Domain:     d,
+			FreshUntil: sqltime.At(time.Now().Add(-time.Hour)),
+		}); err != nil {
+			t.Fatalf("seed %s: %v", d, err)
+		}
+	}
+}
+
+// fast is a limit that never makes a test wait.
+var fast = Limits{Every: time.Microsecond, Burst: 100}
+
+// DNS can only prove a domain is registered, so anything else still goes to
+// RDAP. A DNS hit never reached the RDAP server, so it says nothing about that
 // server's health.
-func TestPreCheckHitLeavesServerStateAlone(t *testing.T) {
-	db := openDB(t)
+func TestPreCheck(t *testing.T) {
 	const origin = "https://rdap.example"
 
-	if _, err := db.SeedCheck(t.Context(), sqlcgen.SeedCheckParams{
-		Domain:     "a.dev",
-		FreshUntil: sqltime.At(time.Now().Add(-time.Hour)),
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	// a failure streak whose throttle has already lapsed, so nothing is skipped
-	if err := db.ThrottleUntil(t.Context(), origin, time.Now().Add(-time.Minute)); err != nil {
-		t.Fatalf("throttle: %v", err)
+	tests := []struct {
+		name         string
+		dns          check.Status
+		wantRDAP     int
+		wantStatus   string
+		wantSource   string
+		wantFailures int
+	}{
+		{"hit skips rdap", check.StatusRegistered, 0, "registered", "dns", 1},
+		{"miss falls through to rdap", check.StatusUnknown, 1, "not_found", "rdap", 0},
 	}
 
-	_, err := CheckDomains(t.Context(), db, newFake(check.Result{Status: check.StatusNotFound}), []string{"a.dev"}, Options{
-		Limits:   Limits{Every: time.Microsecond, Burst: 100},
-		Origins:  fixedOrigin(origin),
-		PreCheck: newFake(check.Result{Status: check.StatusRegistered, Source: "dns"}),
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openDB(t)
+			ctx := t.Context()
+			seedDue(t, db, "a.dev")
+			// a failure streak whose throttle has already lapsed, so nothing
+			// is skipped
+			if err := db.ThrottleUntil(ctx, origin, time.Now().Add(-time.Minute)); err != nil {
+				t.Fatalf("throttle: %v", err)
+			}
+
+			rdap := newFake(check.Result{Status: check.StatusNotFound, Source: "rdap", Origin: origin})
+			_, err := CheckDomains(ctx, db, rdap, []string{"a.dev"}, Options{
+				Limits:   fast,
+				Origins:  fixedOrigin(origin),
+				PreCheck: newFake(check.Result{Status: tt.dns, Source: "dns"}),
+			})
+			if err != nil {
+				t.Fatalf("CheckDomains: %v", err)
+			}
+
+			if n := rdap.calls["a.dev"]; n != tt.wantRDAP {
+				t.Errorf("rdap queried %d times, want %d", n, tt.wantRDAP)
+			}
+			row, err := db.GetCheck(ctx, "a.dev")
+			if err != nil {
+				t.Fatalf("GetCheck: %v", err)
+			}
+			if row.Status != tt.wantStatus || row.Source == nil || *row.Source != tt.wantSource {
+				t.Errorf("stored %s from %v, want %s from %s", row.Status, row.Source, tt.wantStatus, tt.wantSource)
+			}
+			if n := db.ServerFailures(ctx, origin); n != tt.wantFailures {
+				t.Errorf("server failures = %d, want %d", n, tt.wantFailures)
+			}
+		})
+	}
+}
+
+// -limit and -once both bound a run that would otherwise keep going.
+func TestRunStops(t *testing.T) {
+	tests := []struct {
+		name string
+		opts Options
+		want int64
+	}{
+		{"at the limit", Options{Limit: 2, Workers: 1}, 2},
+		// workers already holding a domain mustn't push it over
+		{"at the limit with several workers", Options{Limit: 2, Workers: 4}, 2},
+		{"after one batch with once", Options{Once: true, Batch: 3, Workers: 1}, 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openDB(t)
+			seedDue(t, db, "a.dev", "b.dev", "c.dev", "d.dev", "e.dev")
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			checker := newFake(check.Result{Status: check.StatusNotFound})
+			opts := tt.opts
+			opts.Limits = fast
+			done, err := Run(ctx, db, checker, opts)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			if done != tt.want {
+				t.Errorf("Run reported %d checks, want %d", done, tt.want)
+			}
+			if n := int64(len(checker.calls)); n != tt.want {
+				t.Errorf("queried %d domains, want %d", n, tt.want)
+			}
+		})
+	}
+}
+
+// strayChecker answers for a domain that has no row, so storing it fails.
+type strayChecker struct{}
+
+func (strayChecker) Source() string {
+	return "stray"
+}
+
+func (strayChecker) Check(context.Context, string) check.Result {
+	return check.Result{Domain: "ghost.dev", Status: check.StatusUnknown, Err: errors.New("refused")}
+}
+
+// A write that fails is on us, so the sweep stops and says why instead of
+// carrying on.
+func TestRunReturnsStoreErrors(t *testing.T) {
+	db := openDB(t)
+	seedDue(t, db, "a.dev")
+
+	_, err := Run(t.Context(), db, strayChecker{}, Options{Limits: fast})
+	if err == nil || !strings.Contains(err.Error(), "store") {
+		t.Errorf("Run = %v, want a store error", err)
+	}
+}
+
+// Old attempts are pruned when a sweep starts, but the last month is kept
+// since it drives the backoff.
+func TestRunPrunesOldAttempts(t *testing.T) {
+	db := openDB(t)
+	ctx := t.Context()
+	seedDue(t, db, "a.dev")
+	// nothing due, so Run only prunes
+	if err := db.DeferCheck(ctx, sqlcgen.DeferCheckParams{
+		Domain:     "a.dev",
+		FreshUntil: sqltime.At(time.Now().Add(time.Hour)),
+	}); err != nil {
+		t.Fatalf("defer: %v", err)
+	}
+
+	for _, age := range []time.Duration{31 * 24 * time.Hour, 29 * 24 * time.Hour} {
+		if err := db.RecordAttempt(ctx, sqlcgen.RecordAttemptParams{
+			Domain:      "a.dev",
+			AttemptedAt: sqltime.At(time.Now().Add(-age)),
+			ErrorKind:   "timeout",
+			Retryable:   true,
+		}); err != nil {
+			t.Fatalf("RecordAttempt: %v", err)
+		}
+	}
+
+	if _, err := Run(ctx, db, newFake(check.Result{Status: check.StatusNotFound}), Options{Limits: fast, Once: true}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	left, err := db.RecentAttempts(ctx, sqlcgen.RecentAttemptsParams{Domain: "a.dev", Limit: 10})
 	if err != nil {
+		t.Fatalf("RecentAttempts: %v", err)
+	}
+	if len(left) != 1 || time.Since(left[0].AttemptedAt.Time) > 30*24*time.Hour {
+		t.Errorf("kept %d attempts, want only the one from 29 days ago", len(left))
+	}
+}
+
+// Backoff grows with failures from the last week, older ones don't count.
+func TestFailureStreakCountsTheLastWeek(t *testing.T) {
+	db := openDB(t)
+	ctx := t.Context()
+	seedDue(t, db, "a.dev")
+
+	for _, age := range []time.Duration{8 * 24 * time.Hour, 2 * 24 * time.Hour, time.Hour} {
+		if err := db.RecordAttempt(ctx, sqlcgen.RecordAttemptParams{
+			Domain:      "a.dev",
+			AttemptedAt: sqltime.At(time.Now().Add(-age)),
+			ErrorKind:   "timeout",
+			Retryable:   true,
+		}); err != nil {
+			t.Fatalf("RecordAttempt: %v", err)
+		}
+	}
+
+	failing := newFake(check.Result{Status: check.StatusUnknown, Err: errors.New("timeout"), ErrKind: "timeout", Retryable: true})
+	if _, err := CheckDomains(ctx, db, failing, []string{"a.dev"}, Options{Limits: fast, MaxAttempts: 1}); err != nil {
 		t.Fatalf("CheckDomains: %v", err)
 	}
 
-	if n := db.ServerFailures(t.Context(), origin); n != 1 {
-		t.Errorf("failures = %d, want 1 (untouched by a DNS answer)", n)
+	row, err := db.GetCheck(ctx, "a.dev")
+	if err != nil {
+		t.Fatalf("GetCheck: %v", err)
+	}
+	// two failures in the window, so 5m doubled twice
+	want := time.Now().Add(20 * time.Minute)
+	if row.FreshUntil.Before(want.Add(-5*time.Second)) || row.FreshUntil.After(want.Add(5*time.Second)) {
+		t.Errorf("deferred to %v, want about %v", row.FreshUntil.Time, want)
 	}
 }
