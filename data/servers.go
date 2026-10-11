@@ -45,7 +45,7 @@ func (db *DB) RecordServer(ctx context.Context, res check.Result) (time.Time, er
 
 	// most 429s have no Retry-After (Google's don't), so back off by streak
 	wait := res.RetryAfter
-	if wait <= 0 && throttling(res) {
+	if wait <= 0 && res.Throttled {
 		wait = check.Backoff(time.Now(), db.ServerFailures(ctx, res.Origin), 0).Sub(time.Now())
 	}
 
@@ -64,12 +64,6 @@ func (db *DB) RecordServer(ctx context.Context, res check.Result) (time.Time, er
 		LastFailure:      &now,
 		RateLimitedUntil: until,
 	})
-}
-
-// throttling reports whether a failure means backing off the whole server.
-// Retryable ones are about the server, permanent ones about the domain.
-func throttling(res check.Result) bool {
-	return res.Retryable
 }
 
 // ServerFailures returns the consecutive failure count for an origin, zero if

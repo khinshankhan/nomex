@@ -15,7 +15,9 @@ func TestRecordServer(t *testing.T) {
 	var (
 		ok        = check.Result{Domain: "a.dev", Origin: origin, Status: check.StatusNotFound}
 		permanent = check.Result{Domain: "a.dev", Origin: origin, Err: errNotDone{}}
-		bare429   = check.Result{Domain: "a.dev", Origin: origin, Err: errNotDone{}, Retryable: true}
+		// eg a 503, worth retrying the domain but not about our rate
+		transient = check.Result{Domain: "a.dev", Origin: origin, Err: errNotDone{}, Retryable: true}
+		bare429   = check.Result{Domain: "a.dev", Origin: origin, Err: errNotDone{}, Retryable: true, Throttled: true}
 	)
 	retryAfter := func(d time.Duration) check.Result {
 		r := bare429
@@ -35,6 +37,7 @@ func TestRecordServer(t *testing.T) {
 		// two failures already, 5m doubled twice
 		{"bare 429 backs off by streak", []check.Result{permanent, permanent, bare429}, 3, 20 * time.Minute},
 		{"permanent failure doesn't throttle", []check.Result{permanent, permanent}, 2, 0},
+		{"transient failure doesn't throttle", []check.Result{transient, transient}, 2, 0},
 		{"a wait is never shortened", []check.Result{retryAfter(time.Hour), retryAfter(time.Minute)}, 2, time.Hour},
 		{"a wait can be extended", []check.Result{retryAfter(time.Minute), retryAfter(time.Hour)}, 2, time.Hour},
 		{"success clears streak and throttle", []check.Result{retryAfter(time.Hour), bare429, ok}, 0, 0},

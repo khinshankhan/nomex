@@ -84,6 +84,7 @@ func TestCheck(t *testing.T) {
 		wantErr        bool
 		wantRetryable  bool
 		wantRetryAfter time.Duration
+		wantThrottled  bool
 		wantBlock      bool
 	}{
 		{
@@ -130,6 +131,17 @@ func TestCheck(t *testing.T) {
 			wantErr:        true,
 			wantRetryable:  true,
 			wantRetryAfter: 2 * time.Minute,
+			wantThrottled:  true,
+		},
+		{
+			// an overloaded server often stops answering instead of sending a 429
+			name:          "timeout throttles",
+			domain:        "slow.test",
+			answer:        status(http.StatusRequestTimeout),
+			wantStatus:    check.StatusUnknown,
+			wantErr:       true,
+			wantRetryable: true,
+			wantThrottled: true,
 		},
 		{
 			name:          "server failure",
@@ -212,6 +224,9 @@ func TestCheck(t *testing.T) {
 			}
 			if got.RetryAfter != tt.wantRetryAfter {
 				t.Errorf("retry after = %v, want %v", got.RetryAfter, tt.wantRetryAfter)
+			}
+			if got.Throttled != tt.wantThrottled {
+				t.Errorf("throttled = %v, want %v", got.Throttled, tt.wantThrottled)
 			}
 			if got.Blockable() != tt.wantBlock {
 				t.Errorf("block reason = %q, want blocked=%v", got.BlockReason, tt.wantBlock)

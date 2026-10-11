@@ -42,6 +42,10 @@ type Result struct {
 	Retryable  bool
 	RetryAfter time.Duration
 
+	// Throttled means the server is pushing back on our rate, a 429 or a
+	// timeout, so the whole server should be backed off, not just the domain.
+	Throttled bool
+
 	// ErrKind names the failure, for debugging.
 	ErrKind string
 

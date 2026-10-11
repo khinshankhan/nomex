@@ -126,6 +126,8 @@ func classify(out check.Result, res rdap.Result) check.Result {
 
 	out.ErrKind = kind.String()
 	out.BlockReason = blockable[kind]
+	// NOTE: a silent server is often throttling without saying so
+	out.Throttled = kind == rdap.ErrRateLimited || kind == rdap.ErrTimeout
 	return out
 }
 
