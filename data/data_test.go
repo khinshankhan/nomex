@@ -82,7 +82,9 @@ func TestTxRollsBackOnError(t *testing.T) {
 
 type errNotDone struct{}
 
-func (errNotDone) Error() string { return "not done" }
+func (errNotDone) Error() string {
+	return "not done"
+}
 
 func insert(ctx context.Context, q *sqlcgen.Queries, domain string) error {
 	return q.UpsertCheck(ctx, sqlcgen.UpsertCheckParams{

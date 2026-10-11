@@ -45,7 +45,9 @@ func openDB(t *testing.T) *data.DB {
 
 type fixedOrigin string
 
-func (o fixedOrigin) Origin(context.Context, string) (string, error) { return string(o), nil }
+func (o fixedOrigin) Origin(context.Context, string) (string, error) {
+	return string(o), nil
+}
 
 // A throttled registry's domains should be set aside until it reopens, not
 // re-claimed and re-skipped as fast as the loop can spin.

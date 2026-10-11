@@ -17,7 +17,9 @@ type fakeChecker struct {
 	results []check.Result
 }
 
-func (f *fakeChecker) Source() string { return "fake" }
+func (f *fakeChecker) Source() string {
+	return "fake"
+}
 
 func (f *fakeChecker) Check(ctx context.Context, domain string) check.Result {
 	f.mu.Lock()

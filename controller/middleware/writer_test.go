@@ -150,9 +150,17 @@ func TestWrapperReportsUnsupported(t *testing.T) {
 
 type bareWriter struct{ rec *httptest.ResponseRecorder }
 
-func (b bareWriter) Header() http.Header         { return b.rec.Header() }
-func (b bareWriter) Write(p []byte) (int, error) { return b.rec.Write(p) }
-func (b bareWriter) WriteHeader(code int)        { b.rec.WriteHeader(code) }
+func (b bareWriter) Header() http.Header {
+	return b.rec.Header()
+}
+
+func (b bareWriter) Write(p []byte) (int, error) {
+	return b.rec.Write(p)
+}
+
+func (b bareWriter) WriteHeader(code int) {
+	b.rec.WriteHeader(code)
+}
 
 // Flush and ReadFrom start the response without Write, so a later panic
 // shouldn't try to rewrite the status.
