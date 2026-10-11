@@ -7,12 +7,14 @@ import (
 	"os"
 	"sync"
 
+	"github.com/khinshankhan/logstox/fields"
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/nomex/check/dnschecker"
 	"github.com/khinshankhan/nomex/check/rdapchecker"
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/platform"
 	"github.com/khinshankhan/nomex/platform/config"
+	"github.com/khinshankhan/nomex/platform/logx"
 	"github.com/khinshankhan/nomex/sweep"
 )
 
@@ -69,13 +71,17 @@ flags:
 		return err
 	}
 
+	log := logx.Default().Named("sweep")
+
 	var preCheck check.Checker
 	if *useDNS {
 		preCheck = dnschecker.New()
-		fmt.Fprintln(os.Stderr, "dns pre-check enabled: registered domains skip RDAP, but store no expiry")
+		log.Info("dns pre-check enabled, registered domains skip RDAP but store no expiry")
 	}
 
-	fmt.Fprintf(os.Stderr, "sweeping at %s, %d workers\n", describeLimits(lims), *workers)
+	log.Info("sweeping",
+		fields.String("limits", describeLimits(lims)),
+		fields.Int("workers", *workers))
 
 	var (
 		mu                                     sync.Mutex
@@ -98,7 +104,9 @@ flags:
 			if s.Skipped {
 				skipped++
 				if !*quiet {
-					fmt.Fprintf(os.Stderr, "  %-24s %-12s %s throttled\n", s.Domain, "skipped", s.Origin)
+					log.Info("skipped, registry throttled",
+						fields.String("domain", s.Domain),
+						fields.String("origin", s.Origin))
 				}
 				return
 			}
@@ -116,10 +124,15 @@ flags:
 				return
 			}
 			if s.Err != nil {
-				fmt.Fprintf(os.Stderr, "  %-24s %-12s %v\n", s.Domain, "failed", s.Err)
+				log.Warn("check failed",
+					fields.String("domain", s.Domain),
+					fields.String("origin", s.Origin),
+					fields.Error(s.Err))
 				return
 			}
-			fmt.Fprintf(os.Stderr, "  %-24s %s\n", s.Domain, s.Status)
+			log.Info("checked",
+				fields.String("domain", s.Domain),
+				fields.String("status", string(s.Status)))
 		},
 	})
 
@@ -128,13 +141,17 @@ flags:
 		return fmt.Errorf("after %d checks: %w", done, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "\n%d checked: %d registered, %d available, %d failed\n",
-		done, registered, available, failed)
-	if skipped > 0 {
-		fmt.Fprintf(os.Stderr, "%d skipped: their registry asked us to wait\n", skipped)
+	summary := []logx.Field{
+		fields.Int64("checked", done),
+		fields.Int64("registered", registered),
+		fields.Int64("available", available),
+		fields.Int64("failed", failed),
+		// their registry asked us to wait
+		fields.Int64("skipped", skipped),
 	}
 	if done > 0 {
-		fmt.Fprintf(os.Stderr, "available: %.1f%%\n", float64(available)/float64(done)*100)
+		summary = append(summary, fields.Float64("available_pct", float64(available)/float64(done)*100))
 	}
+	log.Info("sweep finished", summary...)
 	return nil
 }

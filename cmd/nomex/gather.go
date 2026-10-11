@@ -9,11 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/khinshankhan/logstox/fields"
 	"github.com/khinshankhan/nomex/check/rdapchecker"
 	"github.com/khinshankhan/nomex/data"
 	"github.com/khinshankhan/nomex/gather"
 	"github.com/khinshankhan/nomex/platform"
 	"github.com/khinshankhan/nomex/platform/config"
+	"github.com/khinshankhan/nomex/platform/logx"
 	"github.com/khinshankhan/nomex/sweep"
 )
 
@@ -93,29 +95,34 @@ flags:
 	}
 	defer db.Close()
 
+	log := logx.Default().Named("gather")
+
 	var lastReport time.Time
 	inserted, err := gather.Seed(ctx, db, spec, gather.SeedOptions{
 		Priority: *priority,
 		Batch:    *batch,
 		Progress: func(p gather.Progress) {
-			// once a second
-			if time.Since(lastReport) < time.Second && p.Seen < p.Total {
+			// every 10s, the end is reported once seeding returns
+			if time.Since(lastReport) < progressEvery || p.Seen >= p.Total {
 				return
 			}
 			lastReport = time.Now()
-			fmt.Fprintf(os.Stderr, "\r  %s/%s seen, %s new, %.0f/s, %v left    ",
-				commas(p.Seen), commas(p.Total), commas(p.Inserted), p.Rate(), p.Remaining().Round(time.Second))
+			log.Info("seeding",
+				fields.Int64("seen", p.Seen),
+				fields.Int64("total", p.Total),
+				fields.Int64("new", p.Inserted),
+				fields.Int64("per_sec", int64(p.Rate())),
+				fields.Duration("left", p.Remaining().Round(time.Second)))
 		},
 	})
-	fmt.Fprintln(os.Stderr)
-
 	if err != nil {
 		// earlier batches are still committed
 		return fmt.Errorf("seeded %s rows before stopping: %w", commas(inserted), err)
 	}
 
-	fmt.Fprintf(os.Stderr, "seeded %s new rows (%s already present)\n",
-		commas(inserted), commas(total-inserted))
+	log.Info("seeded",
+		fields.Int64("new", inserted),
+		fields.Int64("already_present", total-inserted))
 	return nil
 }
 
@@ -156,10 +163,14 @@ func gatherNames(ctx context.Context, dbPath, from string, tlds []string, priori
 		return fmt.Errorf("seeded %s rows before stopping: %w", commas(inserted), err)
 	}
 
-	fmt.Fprintf(os.Stderr, "seeded %s new rows (%s already present)\n",
-		commas(inserted), commas(int64(len(domains))-inserted))
+	logx.Default().Named("gather").Info("seeded",
+		fields.Int64("new", inserted),
+		fields.Int64("already_present", int64(len(domains))-inserted))
 	return nil
 }
+
+// progressEvery spaces out seeding progress logs.
+const progressEvery = 10 * time.Second
 
 // confirmThreshold is where a run stops being cheap.
 const confirmThreshold = 1_000_000

@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/khinshankhan/logstox/fields"
 	"github.com/khinshankhan/nomex/check"
 	"github.com/khinshankhan/nomex/check/dnschecker"
 	"github.com/khinshankhan/nomex/check/rdapchecker"
@@ -16,6 +17,7 @@ import (
 	"github.com/khinshankhan/nomex/gather"
 	"github.com/khinshankhan/nomex/platform"
 	"github.com/khinshankhan/nomex/platform/config"
+	"github.com/khinshankhan/nomex/platform/logx"
 	"github.com/khinshankhan/nomex/sweep"
 )
 
@@ -126,8 +128,10 @@ flags:
 			preCheck = dnschecker.New()
 		}
 
-		fmt.Fprintf(os.Stderr, "checking %d of %d (%d answered from the database)\n",
-			len(due), len(domains), len(domains)-len(due)-len(blocked))
+		logx.Default().Named("check").Info("checking",
+			fields.Int("due", len(due)),
+			fields.Int("total", len(domains)),
+			fields.Int("from_database", len(domains)-len(due)-len(blocked)))
 
 		_, err = sweep.CheckDomains(ctx, db, checker, due, sweep.Options{
 			Limits:      lims,
