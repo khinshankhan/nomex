@@ -58,6 +58,7 @@ func TestCheckWithRetry(t *testing.T) {
 	rateLimited := check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true}
 	malformed := check.Result{Status: check.StatusUnknown, Err: errors.New("malformed"), BlockReason: "malformed domain name"}
 	available := check.Result{Status: check.StatusNotFound}
+	shortWait := check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true, RetryAfter: time.Millisecond}
 
 	tests := []struct {
 		name      string
@@ -73,6 +74,7 @@ func TestCheckWithRetry(t *testing.T) {
 		// no wait after the last attempt
 		{"gives up after max attempts", []check.Result{rateLimited}, 3, false, 3, true, []int{0, 1}},
 		{"stops on cancellation", []check.Result{rateLimited}, 10, true, 1, true, []int{0}},
+		{"waits out a short Retry-After", []check.Result{shortWait, available}, 3, false, 2, false, []int{0}},
 	}
 
 	for _, tt := range tests {
@@ -102,5 +104,25 @@ func TestCheckWithRetry(t *testing.T) {
 					res.Status, res.Retryable, want.Status, want.Retryable)
 			}
 		})
+	}
+}
+
+// a long Retry-After goes back to the caller, which throttles the server,
+// instead of parking the worker
+func TestLongRetryAfterIsNotWaitedOut(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	f := newFake(check.Result{Status: check.StatusUnknown, Err: errors.New("429"), Retryable: true, RetryAfter: time.Hour})
+	res := checkWithRetry(ctx, f, fastLimiters(), &spyBackoff{}, "x.dev", "o", 3)
+
+	if ctx.Err() != nil {
+		t.Fatalf("waited until the context ended")
+	}
+	if f.calls["x.dev"] != 1 {
+		t.Errorf("checked %d times, want 1", f.calls["x.dev"])
+	}
+	if res.RetryAfter != time.Hour {
+		t.Errorf("RetryAfter = %v, want 1h passed on", res.RetryAfter)
 	}
 }

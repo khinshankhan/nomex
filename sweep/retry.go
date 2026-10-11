@@ -13,6 +13,9 @@ import (
 // stored and the row deferred.
 const DefaultMaxAttempts = 3
 
+// maxRetryWait is the longest Retry-After waited out in place, the backoff cap.
+const maxRetryWait = 8 * time.Second
+
 // newBackoff builds a jitter strategy, seeded so workers differ.
 func newBackoff(seed int64) jitter.Strategy {
 	r := rand.New(rand.NewSource(time.Now().UnixNano() + seed))
@@ -59,6 +62,10 @@ func checkWithRetry(
 		}
 		if attempt == maxAttempts-1 {
 			break
+		}
+		// too long to hold a worker, the caller throttles the server instead
+		if res.RetryAfter > maxRetryWait {
+			return res
 		}
 
 		// a server's Retry-After beats our guess
