@@ -1,38 +1,49 @@
 package main
 
 import (
-	"math"
+	"flag"
 	"testing"
 	"time"
 )
 
-func TestLimits(t *testing.T) {
+func TestLimitFlags(t *testing.T) {
 	tests := []struct {
 		name      string
-		rate      float64
+		args      []string
 		wantEvery time.Duration
+		wantBurst int
 		wantErr   bool
 	}{
-		{"one a second", 1, time.Second, false},
-		{"ten a second", 10, 100 * time.Millisecond, false},
-		{"one every two seconds", 0.5, 2 * time.Second, false},
-		{"zero", 0, 0, true},
-		{"negative", -1, 0, true},
-		{"infinite", math.Inf(1), 0, true},
-		{"not a number", math.NaN(), 0, true},
+		// zero is unset, so the sweep can use a registry's measured budget
+		{"unset", nil, 0, 0, false},
+		{"rate 1 is explicit", []string{"-rate", "1"}, time.Second, 0, false},
+		{"ten a second", []string{"-rate", "10"}, 100 * time.Millisecond, 0, false},
+		{"one every two seconds", []string{"-rate", "0.5"}, 2 * time.Second, 0, false},
+		{"burst alone", []string{"-burst", "5"}, 0, 5, false},
+		{"zero rate", []string{"-rate", "0"}, 0, 0, true},
+		{"negative rate", []string{"-rate", "-1"}, 0, 0, true},
+		{"infinite rate", []string{"-rate", "+Inf"}, 0, 0, true},
+		{"rate not a number", []string{"-rate", "NaN"}, 0, 0, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := limits(tt.rate, 3)
+			flags := flag.NewFlagSet("test", flag.ContinueOnError)
+			limits := limitFlags(flags)
+			if err := flags.Parse(tt.args); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+
+			got, err := limits()
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, want error=%v", err, tt.wantErr)
 			}
 			if err != nil {
 				return
 			}
-			if got.Every != tt.wantEvery || got.Burst != 3 {
-				t.Errorf("got every=%v burst=%d, want every=%v burst=3", got.Every, got.Burst, tt.wantEvery)
+			if got.Every != tt.wantEvery || got.Burst != tt.wantBurst {
+				t.Errorf("got every=%v burst=%d, want every=%v burst=%d",
+					got.Every, got.Burst, tt.wantEvery, tt.wantBurst)
 			}
 		})
 	}

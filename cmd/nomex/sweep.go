@@ -19,8 +19,7 @@ import (
 func runSweep(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("sweep", flag.ContinueOnError)
 	dbPath := flags.String("db", config.DB(), "path to the database")
-	rate := flags.Float64("rate", 1, "queries per second, per registry")
-	burst := flags.Int("burst", sweep.DefaultLimits.Burst, "queries allowed back-to-back per registry")
+	limits := limitFlags(flags)
 	attempts := flags.Int("attempts", sweep.DefaultMaxAttempts, "retries per domain within one sweep")
 	workers := flags.Int("workers", sweep.DefaultWorkers, "concurrent checks")
 	batch := flags.Int("batch", sweep.DefaultBatch, "domains claimed per round")
@@ -36,7 +35,7 @@ Checks domains whose answers have gone stale and writes the results back.
 Runs until interrupted.
 
   nomex sweep -once -limit 10     # a taste, to see it work
-  nomex sweep -rate 1             # gentler
+  nomex sweep -rate 1             # 1/s even where a registry allows more
   nomex sweep                     # until Ctrl-C
 
 flags:
@@ -47,7 +46,7 @@ flags:
 		return err
 	}
 
-	lims, err := limits(*rate, *burst)
+	lims, err := limits()
 	if err != nil {
 		return err
 	}
@@ -73,7 +72,7 @@ flags:
 		fmt.Fprintln(os.Stderr, "dns pre-check enabled: registered domains skip RDAP, but store no expiry")
 	}
 
-	fmt.Fprintf(os.Stderr, "sweeping at %g/s per registry (burst %d), %d workers\n", *rate, *burst, *workers)
+	fmt.Fprintf(os.Stderr, "sweeping at %s, %d workers\n", describeLimits(lims), *workers)
 
 	var (
 		mu                                     sync.Mutex

@@ -8,7 +8,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// Limits is the rate budget for one server.
+// Limits is the rate budget for one server. A zero field is unset and comes
+// from the server's measured budget, else DefaultLimits.
 type Limits struct {
 	// interval between tokens, and how many can be spent at once
 	Every time.Duration
@@ -38,12 +39,6 @@ type limiters struct {
 }
 
 func newLimiters(l Limits) *limiters {
-	if l.Every <= 0 {
-		l.Every = DefaultLimits.Every
-	}
-	if l.Burst <= 0 {
-		l.Burst = DefaultLimits.Burst
-	}
 	return &limiters{
 		byOrigin: make(map[string]*rate.Limiter),
 		limits:   l,
@@ -59,15 +54,29 @@ func (l *limiters) limiter(origin string) *rate.Limiter {
 
 	lim, ok := l.byOrigin[origin]
 	if !ok {
-		// measured beats the default, but not an explicit -rate
-		limits := l.limits
-		if m, known := l.measured[origin]; known && l.limits == DefaultLimits {
-			limits = m
-		}
-		lim = rate.NewLimiter(rate.Every(limits.Every), limits.Burst)
+		b := l.budget(origin)
+		lim = rate.NewLimiter(rate.Every(b.Every), b.Burst)
 		l.byOrigin[origin] = lim
 	}
 	return lim
+}
+
+// budget fills each unset field from origin's measured budget, else the
+// default. An explicit field always wins.
+func (l *limiters) budget(origin string) Limits {
+	fallback, known := l.measured[origin]
+	if !known {
+		fallback = DefaultLimits
+	}
+
+	b := l.limits
+	if b.Every <= 0 {
+		b.Every = fallback.Every
+	}
+	if b.Burst <= 0 {
+		b.Burst = fallback.Burst
+	}
+	return b
 }
 
 // wait blocks until origin has a token. It fails straight away if the token

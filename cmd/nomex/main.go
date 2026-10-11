@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"math"
 	"os"
@@ -109,16 +110,43 @@ func userAgent(v *platform.VersionInfo) string {
 	})
 }
 
-// limits turns -rate and -burst into a per-registry budget.
-func limits(rate float64, burst int) (sweep.Limits, error) {
-	// NOTE: !(rate > 0) also catches NaN
-	if !(rate > 0) || math.IsInf(rate, 0) {
-		return sweep.Limits{}, &usageError{fmt.Sprintf("-rate %g: must be a positive number of queries per second", rate)}
+// limitFlags registers -rate and -burst and returns their per-registry budget
+// once parsed. A flag that isn't given stays zero, so the sweep uses the
+// registry's measured budget.
+func limitFlags(flags *flag.FlagSet) func() (sweep.Limits, error) {
+	rate := flags.Float64("rate", 0, fmt.Sprintf("queries per second, per registry (default measured per registry, else %g)",
+		float64(time.Second)/float64(sweep.DefaultLimits.Every)))
+	burst := flags.Int("burst", 0, fmt.Sprintf("queries allowed back-to-back per registry (default measured per registry, else %d)",
+		sweep.DefaultLimits.Burst))
+
+	return func() (sweep.Limits, error) {
+		set := make(map[string]bool)
+		flags.Visit(func(f *flag.Flag) {
+			set[f.Name] = true
+		})
+
+		l := sweep.Limits{Burst: *burst}
+		if set["rate"] {
+			// NOTE: !(rate > 0) also catches NaN
+			if !(*rate > 0) || math.IsInf(*rate, 0) {
+				return sweep.Limits{}, &usageError{fmt.Sprintf("-rate %g: must be a positive number of queries per second", *rate)}
+			}
+			l.Every = time.Duration(float64(time.Second) / *rate)
+		}
+		return l, nil
 	}
-	return sweep.Limits{
-		Every: time.Duration(float64(time.Second) / rate),
-		Burst: burst,
-	}, nil
+}
+
+// describeLimits says what -rate and -burst came to, for the startup line.
+func describeLimits(l sweep.Limits) string {
+	rate := "measured rate per registry"
+	if l.Every > 0 {
+		rate = fmt.Sprintf("%g/s per registry", float64(time.Second)/float64(l.Every))
+	}
+	if l.Burst > 0 {
+		rate += fmt.Sprintf(" (burst %d)", l.Burst)
+	}
+	return rate
 }
 
 // usageError is a message for a person, not a failure to log.

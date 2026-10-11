@@ -26,8 +26,7 @@ func runCheck(ctx context.Context, args []string) error {
 	tlds := flags.String("tlds", "com", "comma-separated TLDs for names given without one")
 	force := flags.Bool("force", false, "query even when a fresh answer is stored")
 	useDNS := flags.Bool("dns", false, "check DNS first; skips RDAP for domains that resolve")
-	rate := flags.Float64("rate", 1, "queries per second, per registry")
-	burst := flags.Int("burst", sweep.DefaultLimits.Burst, "queries allowed back-to-back per registry")
+	limits := limitFlags(flags)
 	attempts := flags.Int("attempts", sweep.DefaultMaxAttempts, "retries per domain")
 	workers := flags.Int("workers", sweep.DefaultWorkers, "concurrent checks")
 
@@ -52,7 +51,7 @@ flags:
 		return err
 	}
 
-	lims, err := limits(*rate, *burst)
+	lims, err := limits()
 	if err != nil {
 		return err
 	}

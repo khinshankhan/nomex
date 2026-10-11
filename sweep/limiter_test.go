@@ -50,8 +50,10 @@ func TestLimiterWaitsWithoutDeadline(t *testing.T) {
 	}
 }
 
-// a measured budget beats the default, an explicit -rate beats both
+// a measured budget beats the default, an explicit -rate or -burst beats both
 func TestLimiterBudgets(t *testing.T) {
+	const verisign = "https://rdap.verisign.com"
+
 	tests := []struct {
 		name      string
 		limits    Limits
@@ -59,12 +61,15 @@ func TestLimiterBudgets(t *testing.T) {
 		wantRate  rate.Limit
 		wantBurst int
 	}{
-		{"default for an unmeasured origin", DefaultLimits, "https://rdap.example", 1, 3},
-		{"measured verisign", DefaultLimits, "https://rdap.verisign.com", 10, 10},
-		{"measured google", DefaultLimits, "https://pubapi.registry.google", 1, 3},
-		{"unset falls back to measured", Limits{}, "https://rdap.verisign.com", 10, 10},
-		{"explicit beats measured", Limits{Every: time.Hour, Burst: 1}, "https://rdap.verisign.com", rate.Every(time.Hour), 1},
-		{"unresolved origin is still limited", DefaultLimits, "", 1, 3},
+		{"default for an unmeasured origin", Limits{}, "https://rdap.example", 1, 3},
+		{"measured verisign", Limits{}, verisign, 10, 10},
+		{"measured google", Limits{}, "https://pubapi.registry.google", 1, 3},
+		{"explicit beats measured", Limits{Every: time.Hour, Burst: 1}, verisign, rate.Every(time.Hour), 1},
+		// the same values as the default are still explicit
+		{"explicit default beats measured", Limits{Every: time.Second, Burst: 3}, verisign, 1, 3},
+		{"explicit rate keeps measured burst", Limits{Every: time.Second}, verisign, 1, 10},
+		{"explicit burst keeps measured rate", Limits{Burst: 1}, verisign, 10, 1},
+		{"unresolved origin is still limited", Limits{}, "", 1, 3},
 	}
 
 	for _, tt := range tests {
