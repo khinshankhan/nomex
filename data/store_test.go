@@ -22,12 +22,18 @@ func seed(t *testing.T, db *DB, domain string) {
 	}
 }
 
+// within reports whether got is d from now, give or take the test's runtime.
+func within(got time.Time, d time.Duration) bool {
+	want := time.Now().Add(d)
+	return !got.Before(want.Add(-5*time.Second)) && !got.After(want.Add(5*time.Second))
+}
+
 func TestStoreAnswer(t *testing.T) {
 	db := openTest(t)
 	ctx := context.Background()
 	seed(t, db, "taken.dev")
 
-	exp := time.Date(2027, 7, 2, 3, 23, 42, 0, time.UTC)
+	exp := time.Now().Add(365 * 24 * time.Hour).UTC().Truncate(time.Second)
 	reg := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	err := db.StoreResult(ctx, check.Result{
@@ -50,62 +56,92 @@ func TestStoreAnswer(t *testing.T) {
 	if got.Status != "registered" {
 		t.Errorf("status = %q, want registered", got.Status)
 	}
+	if got.Source == nil || *got.Source != "rdap" {
+		t.Errorf("source = %v, want rdap", got.Source)
+	}
 	if got.Expiration == nil || !got.Expiration.Equal(exp) {
 		t.Errorf("expiration = %v, want %v", got.Expiration, exp)
 	}
-	if got.CheckedAt == nil {
-		t.Error("checked_at was not set")
+	if got.RegisteredAt == nil || !got.RegisteredAt.Equal(reg) {
+		t.Errorf("registered_at = %v, want %v", got.RegisteredAt, reg)
 	}
-	if !got.FreshUntil.After(time.Now()) {
-		t.Errorf("fresh_until = %v, not in the future", got.FreshUntil)
+	if got.Server == nil || *got.Server != "https://rdap.example/domain/taken.dev" {
+		t.Errorf("server = %v, want the answering URL", got.Server)
+	}
+	if got.CheckedAt == nil || !within(got.CheckedAt.Time, 0) {
+		t.Errorf("checked_at = %v, want now", got.CheckedAt)
+	}
+	// expiry a year out, so the 90 day cap applies
+	if !within(got.FreshUntil.Time, 90*24*time.Hour) {
+		t.Errorf("fresh_until = %v, want 90 days from now", got.FreshUntil.Time)
 	}
 }
 
-// A failure should never become a status in checks.
-func TestStoreFailureNeverBecomesAnAnswer(t *testing.T) {
-	db := openTest(t)
-	ctx := context.Background()
-	seed(t, db, "flaky.dev")
-
-	before, err := db.GetCheck(ctx, "flaky.dev")
-	if err != nil {
-		t.Fatalf("GetCheck: %v", err)
+// A failure should never become a status in checks. It's recorded as an
+// attempt and the row is deferred, by the server's Retry-After if it sent one
+// and by the failure streak otherwise.
+func TestStoreFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		failures   int
+		retryAfter time.Duration
+		wantDefer  time.Duration
+	}{
+		{"first failure", 0, 0, 5 * time.Minute},
+		{"backs off by streak", 3, 0, 40 * time.Minute},
+		{"retry-after wins", 3, 10 * time.Minute, 10 * time.Minute},
 	}
 
-	err = db.StoreResult(ctx, check.Result{
-		Domain:    "flaky.dev",
-		Status:    check.StatusUnknown,
-		Err:       errors.New("timeout"),
-		ErrKind:   "timeout",
-		Retryable: true,
-	}, 0)
-	if err != nil {
-		t.Fatalf("StoreResult: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTest(t)
+			ctx := t.Context()
+			seed(t, db, "flaky.dev")
 
-	after, err := db.GetCheck(ctx, "flaky.dev")
-	if err != nil {
-		t.Fatalf("GetCheck: %v", err)
-	}
-	if after.Status != before.Status {
-		t.Errorf("status changed from %q to %q on a failure", before.Status, after.Status)
-	}
-	if after.CheckedAt != nil {
-		t.Error("checked_at was set by a failure")
-	}
-	if !after.FreshUntil.After(before.FreshUntil.Time) {
-		t.Error("fresh_until was not deferred, so the sweep would spin on this row")
-	}
+			err := db.StoreResult(ctx, check.Result{
+				Domain:     "flaky.dev",
+				Status:     check.StatusUnknown,
+				Err:        errors.New("rate limited"),
+				ErrKind:    "rate limited",
+				Retryable:  true,
+				RetryAfter: tt.retryAfter,
+			}, tt.failures)
+			if err != nil {
+				t.Fatalf("StoreResult: %v", err)
+			}
 
-	attempts, err := db.RecentAttempts(ctx, sqlcgen.RecentAttemptsParams{Domain: "flaky.dev", Limit: 10})
-	if err != nil {
-		t.Fatalf("RecentAttempts: %v", err)
-	}
-	if len(attempts) != 1 {
-		t.Fatalf("%d attempts recorded, want 1", len(attempts))
-	}
-	if !attempts[0].Retryable {
-		t.Error("a timeout was recorded as non-retryable")
+			got, err := db.GetCheck(ctx, "flaky.dev")
+			if err != nil {
+				t.Fatalf("GetCheck: %v", err)
+			}
+			if got.Status != "unchecked" {
+				t.Errorf("status = %q, want unchecked (a failure isn't an answer)", got.Status)
+			}
+			if got.CheckedAt != nil {
+				t.Error("checked_at was set by a failure")
+			}
+			if !within(got.FreshUntil.Time, tt.wantDefer) {
+				t.Errorf("fresh_until = %v, want %v from now", got.FreshUntil.Time, tt.wantDefer)
+			}
+
+			attempts, err := db.RecentAttempts(ctx, sqlcgen.RecentAttemptsParams{Domain: "flaky.dev", Limit: 10})
+			if err != nil {
+				t.Fatalf("RecentAttempts: %v", err)
+			}
+			if len(attempts) != 1 {
+				t.Fatalf("%d attempts recorded, want 1", len(attempts))
+			}
+			a := attempts[0]
+			if a.ErrorKind != "rate limited" || !a.Retryable {
+				t.Errorf("attempt = %q retryable=%v, want \"rate limited\" retryable=true", a.ErrorKind, a.Retryable)
+			}
+			switch {
+			case tt.retryAfter == 0 && a.RetryAfter != nil:
+				t.Errorf("retry_after = %v, want NULL", a.RetryAfter.Time)
+			case tt.retryAfter > 0 && (a.RetryAfter == nil || !within(a.RetryAfter.Time, tt.retryAfter)):
+				t.Errorf("retry_after = %v, want %v from now", a.RetryAfter, tt.retryAfter)
+			}
+		})
 	}
 }
 
