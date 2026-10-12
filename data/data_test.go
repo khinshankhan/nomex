@@ -1,0 +1,106 @@
+package data
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/khinshankhan/nomex/data/sqlcgen"
+	"github.com/khinshankhan/nomex/data/sqltime"
+)
+
+func TestOpenAppliesPragmas(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		pragma string
+		want   string
+	}{
+		{"journal_mode", "wal"},
+		{"foreign_keys", "1"},
+		{"busy_timeout", "5000"},
+		{"synchronous", "1"}, // NORMAL
+	}
+
+	for _, tt := range tests {
+		var got string
+		if err := db.sql.QueryRowContext(ctx, "PRAGMA "+tt.pragma).Scan(&got); err != nil {
+			t.Errorf("PRAGMA %s: %v", tt.pragma, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("PRAGMA %s = %q, want %q", tt.pragma, got, tt.want)
+		}
+	}
+}
+
+func TestTxRollsBackOnError(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+
+	sentinel := errNotDone{}
+	err := db.Tx(ctx, func(q *sqlcgen.Queries) error {
+		if err := insert(ctx, q, "rolled-back.dev"); err != nil {
+			return err
+		}
+		return sentinel
+	})
+	if err != sentinel {
+		t.Fatalf("Tx error = %v, want the sentinel", err)
+	}
+
+	if _, err := db.GetCheck(ctx, "rolled-back.dev"); err == nil {
+		t.Error("row survived a rolled-back transaction")
+	}
+}
+
+type errNotDone struct{}
+
+func (errNotDone) Error() string {
+	return "not done"
+}
+
+func insert(ctx context.Context, q *sqlcgen.Queries, domain string) error {
+	return q.UpsertCheck(ctx, sqlcgen.UpsertCheckParams{
+		Domain:     domain,
+		Status:     "unchecked",
+		FreshUntil: sqltime.At(time.Now().Add(-time.Hour)),
+	})
+}
+
+// by default the driver writes Go's time format, which datetime() can't parse
+func TestTimestampsAreSQLiteReadable(t *testing.T) {
+	db := openTest(t)
+	ctx := t.Context()
+
+	future := time.Now().Add(time.Hour).UTC()
+	if _, err := db.SeedCheck(ctx, sqlcgen.SeedCheckParams{
+		Domain:     "fmt.dev",
+		FreshUntil: sqltime.At(future),
+	}); err != nil {
+		t.Fatalf("SeedCheck: %v", err)
+	}
+
+	var parsed *string
+	err := db.sql.QueryRowContext(ctx,
+		`SELECT datetime(fresh_until) FROM checks WHERE domain = 'fmt.dev'`).Scan(&parsed)
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if parsed == nil {
+		var raw string
+		db.sql.QueryRowContext(ctx,
+			`SELECT quote(fresh_until) FROM checks WHERE domain = 'fmt.dev'`).Scan(&raw)
+		t.Fatalf("datetime() could not parse the stored timestamp %s", raw)
+	}
+
+	var due int
+	if err := db.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM checks WHERE domain = 'fmt.dev' AND fresh_until > datetime('now')`).Scan(&due); err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if due != 1 {
+		t.Error("a future fresh_until did not compare as future")
+	}
+}

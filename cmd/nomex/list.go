@@ -1,0 +1,168 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/khinshankhan/nomex/check"
+	"github.com/khinshankhan/nomex/data"
+	"github.com/khinshankhan/nomex/data/sqlcgen"
+	"github.com/khinshankhan/nomex/data/sqltime"
+	"github.com/khinshankhan/nomex/platform/config"
+)
+
+func runList(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("list", flag.ContinueOnError)
+	dbPath := flags.String("db", config.DB(), "path to the database")
+	status := flags.String("status", string(check.StatusNotFound), "status to list; empty for all")
+	tld := flags.String("tld", "", "restrict to one suffix")
+	length := flags.Int64("len", 0, "restrict to labels of this length")
+	freshOnly := flags.Bool("fresh", false, "omit answers past their TTL")
+	limit := flags.Int64("limit", 0, "maximum rows (0 = no limit)")
+	out := flags.String("o", "", "write to this file instead of stdout")
+	verbose := flags.Bool("v", false, "show status, age and expiry")
+
+	flags.Usage = func() {
+		fmt.Fprint(os.Stderr, `usage: nomex list [flags]
+
+Reports what the database knows. Defaults to available domains.
+
+  nomex list                          available domains
+  nomex list -tld dev -len 4          four-letter .dev
+  nomex list -fresh -v                only trustworthy answers, with ages
+  nomex list -o available-domains.txt
+
+Answers past their TTL are still shown by default, marked stale.
+
+flags:
+`)
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	db, err := data.Open(ctx, *dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// SQLite wants -1 for no limit
+	lim := *limit
+	if lim <= 0 {
+		lim = -1
+	}
+
+	rows, err := db.ListChecks(ctx, sqlcgen.ListChecksParams{
+		Status:    *status,
+		Suffix:    strings.TrimPrefix(*tld, "."),
+		LabelLen:  *length,
+		FreshOnly: boolArg(*freshOnly),
+		Lim:       lim,
+	})
+	if err != nil {
+		return fmt.Errorf("list: %w", err)
+	}
+
+	var stale int
+	now := time.Now()
+	err = writeOutput(*out, func(w io.Writer) {
+		for _, r := range rows {
+			if r.Stale {
+				stale++
+			}
+			if !*verbose {
+				fmt.Fprintln(w, r.Domain)
+				continue
+			}
+			fmt.Fprintf(w, "%-24s %-11s %-12s %s\n",
+				r.Domain, r.Status, age(now, r.CheckedAt), staleness(r.Stale, r.Expiration))
+		}
+	})
+	if err != nil {
+		return err
+	}
+
+	// stderr, so it stays out of a redirected list
+	fmt.Fprintf(os.Stderr, "%d rows", len(rows))
+	if stale > 0 {
+		fmt.Fprintf(os.Stderr, ", %d past their TTL", stale)
+	}
+	fmt.Fprintln(os.Stderr)
+	return nil
+}
+
+// writeOutput buffers write to path, or stdout when path is empty. A failed
+// write, flush or close is returned, so a truncated file isn't a success.
+func writeOutput(path string, write func(io.Writer)) error {
+	if path == "" {
+		return flushed(os.Stdout, write)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := flushed(f, write); err != nil {
+		f.Close()
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
+	}
+	return nil
+}
+
+// flushed runs write through a buffer on w.
+//
+// NOTE: a bufio.Writer keeps its first error, so Flush reports any earlier
+// failed write too
+func flushed(w io.Writer, write func(io.Writer)) error {
+	buf := bufio.NewWriter(w)
+	write(buf)
+	return buf.Flush()
+}
+
+func boolArg(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// age reports how long ago the answer was established.
+func age(now time.Time, checked *sqltime.UTC) string {
+	if checked == nil {
+		return "never"
+	}
+
+	d := now.Sub(checked.Time)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+func staleness(stale bool, expiration *sqltime.UTC) string {
+	var parts []string
+	if stale {
+		parts = append(parts, "stale")
+	}
+	if expiration != nil {
+		parts = append(parts, "expires "+expiration.Format("2006-01-02"))
+	}
+	return strings.Join(parts, "  ")
+}
