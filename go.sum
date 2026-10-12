@@ -12,8 +12,8 @@ github.com/khinshankhan/jitter-go/v2 v2.0.1 h1:uyjGlv7HieAfdhQ72vaaa5PeoiiZrhZBE
 github.com/khinshankhan/jitter-go/v2 v2.0.1/go.mod h1:1TfBkhc7RgvFaHLO9IxabyXOYUFVgkgejXgCdyCJWjw=
 github.com/khinshankhan/logstox v0.1.0 h1:wB9EQR05jeA+YQUVd+XW0R6yvdM5Rur4Wh5KA97Unrk=
 github.com/khinshankhan/logstox v0.1.0/go.mod h1:CoUe8PK8fqQSKRgPHJYASBoDwmJlTZ6MtBygyrdtckU=
-github.com/khinshankhan/logstox/backend/zapx v0.1.0 h1:5fg33JtLvokVHz/LaGUWlWzkgLm/nCpFRzi9rRj0AaE=
-github.com/khinshankhan/logstox/backend/zapx v0.1.0/go.mod h1:IZSI5PDxVKRdwyr0LEqeXNL9kTVjzt/RvwQ+FfjylpM=
+github.com/khinshankhan/logstox/backend/zapx v0.1.1 h1:P4FL8w1f/aqg/jLG4UEzkSDkaX2ci5SFkv/PPrl/SOg=
+github.com/khinshankhan/logstox/backend/zapx v0.1.1/go.mod h1:IZSI5PDxVKRdwyr0LEqeXNL9kTVjzt/RvwQ+FfjylpM=
 github.com/khinshankhan/rdap v0.1.0 h1:sFkl0zH+hA7D9AsArprMggwiLzP1tVSOKxJhVuX680I=
 github.com/khinshankhan/rdap v0.1.0/go.mod h1:Qjs1pF1TO4Gqnx4f2hC8EiFeEcnmNg1FHlKEAy26UWU=
 github.com/mattn/go-isatty v0.0.24 h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI=
